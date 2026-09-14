@@ -1,0 +1,19 @@
+node_modules/
+results/
+
+# Logs
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git Bash / MSYS crash dumps
+*.exe.stackdump
+
+# Editor
+.vscode/
+.idea/
+
+# Env
+.env
