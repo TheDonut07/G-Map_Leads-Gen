@@ -138,47 +138,49 @@ function getISTParts(date) {
   };
 }
 
+const FIELD_TIMEOUT = 4000; // avoid Playwright's 30s default wait on selectors that simply don't exist for a listing
+
 async function scrapeListingDetails(page) {
   const name = await page
     .locator('h1.DUwDvf, h1.fontHeadlineLarge')
     .first()
-    .textContent()
+    .textContent({ timeout: FIELD_TIMEOUT })
     .catch(() => null);
 
   const ratingText = await page
     .locator('div.F7nice span[aria-hidden="true"]')
     .first()
-    .textContent()
+    .textContent({ timeout: FIELD_TIMEOUT })
     .catch(() => null);
 
   const reviewCountText = await page
     .locator('div.F7nice span[aria-label*="reviews" i]')
     .first()
-    .getAttribute('aria-label')
+    .getAttribute('aria-label', { timeout: FIELD_TIMEOUT })
     .catch(() => null);
 
   const address = await page
     .locator('button[data-item-id="address"]')
     .first()
-    .getAttribute('aria-label')
+    .getAttribute('aria-label', { timeout: FIELD_TIMEOUT })
     .catch(() => null);
 
   const phone = await page
     .locator('button[data-item-id^="phone:tel:"]')
     .first()
-    .getAttribute('aria-label')
+    .getAttribute('aria-label', { timeout: FIELD_TIMEOUT })
     .catch(() => null);
 
   const website = await page
     .locator('a[data-item-id="authority"]')
     .first()
-    .getAttribute('href')
+    .getAttribute('href', { timeout: FIELD_TIMEOUT })
     .catch(() => null);
 
   const category = await page
     .locator('button.DkEaL')
     .first()
-    .textContent()
+    .textContent({ timeout: FIELD_TIMEOUT })
     .catch(() => null);
 
   const reviewCount = reviewCountText
