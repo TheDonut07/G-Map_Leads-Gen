@@ -14,4 +14,22 @@ rmdir /s /q build
 rmdir /s /q dist
 del /q GMapLeadsGen.spec
 
-echo Done. GMapLeadsGen.exe rebuilt.
+echo.
+echo Packaging files to share...
+
+set PKG_DIR=GMapLeadsGen-package
+if exist "%PKG_DIR%" rmdir /s /q "%PKG_DIR%"
+mkdir "%PKG_DIR%"
+
+copy /y GMapLeadsGen.exe "%PKG_DIR%\" >nul
+copy /y scraper.js "%PKG_DIR%\" >nul
+copy /y package.json "%PKG_DIR%\" >nul
+copy /y package-lock.json "%PKG_DIR%\" >nul
+copy /y setup.bat "%PKG_DIR%\" >nul
+
+if exist GMapLeadsGen.zip del /q GMapLeadsGen.zip
+powershell -NoProfile -Command "Compress-Archive -Path '%PKG_DIR%\*' -DestinationPath 'GMapLeadsGen.zip' -Force"
+
+rmdir /s /q "%PKG_DIR%"
+
+echo Done. GMapLeadsGen.exe rebuilt and GMapLeadsGen.zip packaged for sharing.

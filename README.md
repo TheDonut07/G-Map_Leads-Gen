@@ -56,9 +56,13 @@ Whenever you change `gui.py`, rebuild the exe by running:
 build.bat
 ```
 
-This runs PyInstaller, copies the fresh `dist\GMapLeadsGen.exe` over the one at the project root, and cleans up the leftover `build/`, `dist/`, and `.spec` files.
+This runs PyInstaller, copies the fresh `dist\GMapLeadsGen.exe` over the one at the project root, cleans up the leftover `build/`, `dist/`, and `.spec` files, and also packages everything a teammate needs into `GMapLeadsGen.zip`.
 
 Note: `GMapLeadsGen.exe` only bundles the GUI — it still shells out to `node scraper.js` at runtime, so Node.js and this project's npm dependencies (`playwright`, `xlsx`) must be present next to it.
+
+### Sharing it with someone else
+
+`GMapLeadsGen.zip` (produced by `build.bat`) contains everything needed to hand off the tool: `GMapLeadsGen.exe`, `scraper.js`, `package.json`, `package-lock.json`, and `setup.bat`. Send them the zip — they unzip it, run `setup.bat` (installs npm dependencies and downloads Playwright's Chromium; needs internet access, and Node.js installed first — `setup.bat` will tell them if it's missing), then run `GMapLeadsGen.exe`.
 
 ## Data collected
 

@@ -3,6 +3,7 @@ results/
 dist/
 build/
 *.spec
+GMapLeadsGen.zip
 
 # Logs
 npm-debug.log*
