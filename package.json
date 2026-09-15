@@ -2,9 +2,8 @@
   "name": "g-map_leads-gen",
   "version": "1.0.0",
   "description": "",
-  "main": "GUI/main.js",
+  "main": "index.js",
   "scripts": {
-    "start": "electron .",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -13,8 +12,5 @@
   "type": "commonjs",
   "dependencies": {
     "playwright": "^1.63.0"
-  },
-  "devDependencies": {
-    "electron": "^44.3.0"
   }
 }
