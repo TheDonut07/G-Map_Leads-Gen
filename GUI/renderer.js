@@ -5,8 +5,36 @@ const logEl = document.getElementById('log');
 const resultsBody = document.getElementById('resultsBody');
 const resultCountEl = document.getElementById('resultCount');
 const openFolderBtn = document.getElementById('openFolderBtn');
+const timerEl = document.getElementById('timerEl');
 
 let lastOutFile = null;
+let timerInterval = null;
+let timerStart = null;
+
+function formatDuration(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function startTimer() {
+  timerStart = Date.now();
+  timerEl.className = 'text-sm font-mono text-slate-500';
+  timerEl.textContent = 'Elapsed: 0:00';
+  timerInterval = setInterval(() => {
+    timerEl.textContent = `Elapsed: ${formatDuration(Date.now() - timerStart)}`;
+  }, 1000);
+}
+
+function stopTimer(succeeded) {
+  clearInterval(timerInterval);
+  timerInterval = null;
+  if (succeeded && timerStart) {
+    timerEl.className = 'text-sm font-mono text-green-600 font-semibold';
+    timerEl.textContent = `Completed in ${formatDuration(Date.now() - timerStart)}`;
+  }
+}
 
 function appendLog(message) {
   const line = document.createElement('div');
@@ -61,6 +89,7 @@ startBtn.addEventListener('click', async () => {
   logEl.innerHTML = '';
   resultsBody.innerHTML = '';
   resultCountEl.textContent = '0';
+  startTimer();
 
   const result = await window.api.startScrape(query, maxResults);
 
@@ -68,10 +97,12 @@ startBtn.addEventListener('click', async () => {
   startBtn.textContent = 'Start';
 
   if (!result.ok) {
+    stopTimer(false);
     appendLog(`Error: ${result.error}`);
     return;
   }
 
+  stopTimer(true);
   lastOutFile = result.outFile;
   openFolderBtn.disabled = false;
 });

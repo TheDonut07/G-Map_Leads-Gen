@@ -282,14 +282,31 @@ async function scrapeLeads(query, maxResults, onProgress = () => {}) {
   }
 }
 
+const GREEN = '\x1b[32m';
+const RESET = '\x1b[0m';
+
+function formatDuration(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 async function main() {
   const query = process.argv[2] || 'Appliance repair service in Sacramento, CA, USA';
   const maxResults = parseInt(process.argv[3] || '10', 10);
 
+  const timerStart = Date.now();
+  const liveTimer = setInterval(() => {
+    process.stdout.write(`\r⏱  Elapsed: ${formatDuration(Date.now() - timerStart)}`);
+  }, 1000);
+
   await scrapeLeads(query, maxResults, (event) => {
     if (event.type === 'status') {
+      process.stdout.write('\r\x1b[K');
       console.log(event.message);
     } else if (event.type === 'listing') {
+      process.stdout.write('\r\x1b[K');
       const r = event.record;
       console.log(`   Name:     ${r.name}`);
       console.log(`   Category: ${r.category}`);
@@ -301,6 +318,10 @@ async function main() {
       console.log('');
     }
   });
+
+  clearInterval(liveTimer);
+  process.stdout.write('\r\x1b[K');
+  console.log(`${GREEN}✔ Completed in ${formatDuration(Date.now() - timerStart)}${RESET}`);
 }
 
 module.exports = { scrapeLeads };
