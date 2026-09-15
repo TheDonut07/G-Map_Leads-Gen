@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>G-Map Leads Gen</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 text-slate-800">
+  <div class="max-w-5xl mx-auto p-6">
+    <h1 class="text-2xl font-semibold mb-1">G-Map Leads Gen</h1>
+    <p class="text-sm text-slate-500 mb-6">Scrape Google Maps business listings and emails.</p>
+
+    <div class="bg-white rounded-lg shadow p-4 mb-6 flex flex-wrap gap-3 items-end">
+      <div class="flex-1 min-w-[280px]">
+        <label class="block text-xs font-medium text-slate-500 mb-1">Search query</label>
+        <input id="query" type="text" placeholder='Appliance repair service in Sacramento, CA, USA'
+          class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      </div>
+      <div class="w-32">
+        <label class="block text-xs font-medium text-slate-500 mb-1"># Results</label>
+        <input id="maxResults" type="number" min="1" value="10"
+          class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      </div>
+      <button id="startBtn"
+        class="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white text-sm font-medium px-5 py-2 rounded">
+        Start
+      </button>
+    </div>
+
+    <div class="bg-white rounded-lg shadow p-4 mb-6">
+      <h2 class="text-sm font-semibold text-slate-600 mb-2">Status log</h2>
+      <div id="log" class="h-32 overflow-y-auto text-xs font-mono bg-slate-50 border border-slate-200 rounded p-2 space-y-0.5"></div>
+    </div>
+
+    <div class="bg-white rounded-lg shadow p-4">
+      <div class="flex justify-between items-center mb-2">
+        <h2 class="text-sm font-semibold text-slate-600">Results (<span id="resultCount">0</span>)</h2>
+        <button id="openFolderBtn" disabled
+          class="text-xs text-blue-600 hover:underline disabled:text-slate-300 disabled:no-underline">
+          Open results file
+        </button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs text-left border-collapse">
+          <thead>
+            <tr class="border-b border-slate-200 text-slate-500">
+              <th class="py-1.5 pr-3">Name</th>
+              <th class="py-1.5 pr-3">Category</th>
+              <th class="py-1.5 pr-3">Rating</th>
+              <th class="py-1.5 pr-3">Phone</th>
+              <th class="py-1.5 pr-3">Website</th>
+              <th class="py-1.5 pr-3">Emails</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

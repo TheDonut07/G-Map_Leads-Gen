@@ -201,14 +201,17 @@ async function scrapeListingDetails(page) {
   };
 }
 
-async function main() {
-  const query = process.argv[2] || 'Appliance repair service in Sacramento, CA, USA';
-  const maxResults = parseInt(process.argv[3] || '10', 10);
-
-  console.log(`\nSearching Google Maps for: "${query}"  (target ${maxResults} results)\n`);
-
+/**
+ * Runs a full scrape and returns the run output. Optionally reports progress
+ * via onProgress(event) so callers (CLI, Electron GUI) can render live status.
+ * event shapes: { type: 'status', message }
+ *               { type: 'listing', index, total, record }
+ */
+async function scrapeLeads(query, maxResults, onProgress = () => {}) {
   const startTime = Date.now();
   const startIST = getISTParts(new Date(startTime));
+
+  onProgress({ type: 'status', message: `Searching Google Maps for: "${query}" (target ${maxResults} results)` });
 
   const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext({
@@ -216,74 +219,95 @@ async function main() {
   });
   const page = await context.newPage();
 
-  const mapsUrl = `https://www.google.com/maps/search/${encodeURIComponent(query)}`;
-  await page.goto(mapsUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(2500);
+  try {
+    const mapsUrl = `https://www.google.com/maps/search/${encodeURIComponent(query)}`;
+    await page.goto(mapsUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(2500);
 
-  // Dismiss consent dialog if present
-  const consentButton = page.locator('button:has-text("Accept all")').first();
-  if (await consentButton.isVisible().catch(() => false)) {
-    await consentButton.click().catch(() => {});
-    await page.waitForTimeout(1000);
-  }
-
-  await autoScrollFeed(page, maxResults);
-  const links = await getResultLinks(page, maxResults);
-  console.log(`Found ${links.length} listing(s). Visiting each...\n`);
-
-  const results = [];
-
-  for (let i = 0; i < links.length; i++) {
-    const href = links[i];
-    console.log(`[${i + 1}/${links.length}] Opening listing...`);
-    await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-    await page.waitForTimeout(1500);
-
-    const details = await scrapeListingDetails(page);
-    let emails = [];
-    if (details.website) {
-      emails = await scrapeWebsiteForEmail(context, details.website);
+    // Dismiss consent dialog if present
+    const consentButton = page.locator('button:has-text("Accept all")').first();
+    if (await consentButton.isVisible().catch(() => false)) {
+      await consentButton.click().catch(() => {});
+      await page.waitForTimeout(1000);
     }
 
-    const record = { ...details, emails, mapsUrl: href };
-    results.push(record);
+    await autoScrollFeed(page, maxResults);
+    const links = await getResultLinks(page, maxResults);
+    onProgress({ type: 'status', message: `Found ${links.length} listing(s). Visiting each...` });
 
-    console.log(`   Name:     ${record.name}`);
-    console.log(`   Category: ${record.category}`);
-    console.log(`   Rating:   ${record.rating}  (${record.reviewCount} reviews)`);
-    console.log(`   Phone:    ${record.phone}`);
-    console.log(`   Address:  ${record.address}`);
-    console.log(`   Website:  ${record.website}`);
-    console.log(`   Emails:   ${emails.length ? emails.join(', ') : 'none found'}`);
-    console.log('');
+    const results = [];
+
+    for (let i = 0; i < links.length; i++) {
+      const href = links[i];
+      onProgress({ type: 'status', message: `[${i + 1}/${links.length}] Opening listing...` });
+      await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+      await page.waitForTimeout(1500);
+
+      const details = await scrapeListingDetails(page);
+      let emails = [];
+      if (details.website) {
+        emails = await scrapeWebsiteForEmail(context, details.website);
+      }
+
+      const record = { ...details, emails, mapsUrl: href };
+      results.push(record);
+
+      onProgress({ type: 'listing', index: i + 1, total: links.length, record });
+    }
+
+    const endTime = Date.now();
+    const endIST = getISTParts(new Date(endTime));
+    const durationMinutes = Number(((endTime - startTime) / 60000).toFixed(2));
+
+    const resultsDir = path.join(__dirname, 'results');
+    fs.mkdirSync(resultsDir, { recursive: true });
+    const outFile = path.join(resultsDir, `${sanitizeForFilename(query)}.json`);
+
+    const output = {
+      query,
+      resultCount: results.length,
+      results,
+      dateIST: startIST.date,
+      startedAtIST: startIST.timestamp,
+      endedAtIST: endIST.timestamp,
+      durationMinutes,
+    };
+
+    fs.writeFileSync(outFile, JSON.stringify(output, null, 2), 'utf-8');
+    onProgress({ type: 'status', message: `Done. Saved ${results.length} records to ${outFile}` });
+
+    return { output, outFile };
+  } finally {
+    await browser.close();
   }
-
-  const endTime = Date.now();
-  const endIST = getISTParts(new Date(endTime));
-  const durationMinutes = Number(((endTime - startTime) / 60000).toFixed(2));
-
-  const resultsDir = path.join(__dirname, 'results');
-  fs.mkdirSync(resultsDir, { recursive: true });
-  const outFile = path.join(resultsDir, `${sanitizeForFilename(query)}.json`);
-
-  const output = {
-    query,
-    resultCount: results.length,
-    results,
-    dateIST: startIST.date,
-    startedAtIST: startIST.timestamp,
-    endedAtIST: endIST.timestamp,
-    durationMinutes,
-  };
-
-  fs.writeFileSync(outFile, JSON.stringify(output, null, 2), 'utf-8');
-  console.log(`Done. Saved ${results.length} records to ${outFile}`);
-  console.log(`Started: ${startIST.timestamp}  Ended: ${endIST.timestamp}  Duration: ${durationMinutes} min\n`);
-
-  await browser.close();
 }
 
-main().catch((err) => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+async function main() {
+  const query = process.argv[2] || 'Appliance repair service in Sacramento, CA, USA';
+  const maxResults = parseInt(process.argv[3] || '10', 10);
+
+  await scrapeLeads(query, maxResults, (event) => {
+    if (event.type === 'status') {
+      console.log(event.message);
+    } else if (event.type === 'listing') {
+      const r = event.record;
+      console.log(`   Name:     ${r.name}`);
+      console.log(`   Category: ${r.category}`);
+      console.log(`   Rating:   ${r.rating}  (${r.reviewCount} reviews)`);
+      console.log(`   Phone:    ${r.phone}`);
+      console.log(`   Address:  ${r.address}`);
+      console.log(`   Website:  ${r.website}`);
+      console.log(`   Emails:   ${r.emails.length ? r.emails.join(', ') : 'none found'}`);
+      console.log('');
+    }
+  });
+}
+
+module.exports = { scrapeLeads };
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
+}
