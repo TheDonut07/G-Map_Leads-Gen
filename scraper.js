@@ -4,6 +4,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const XLSX = require('xlsx');
 
 const EMAIL_REGEX = /[a-zA-Z0-9.\-_+]+@[a-zA-Z0-9.\-_]+\.[a-zA-Z]{2,}/g;
 const IGNORE_EMAIL_SUFFIXES = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'];
@@ -105,6 +106,25 @@ async function getResultLinks(page, maxResults) {
 
 function textOrNull(val) {
   return val && val.trim().length > 0 ? val.trim() : null;
+}
+
+function writeExcelSummary(results, excelFile) {
+  const rows = results.map((r) => ({
+    Name: r.name || '',
+    Category: r.category || '',
+    Rating: r.rating || '',
+    Reviews: r.reviewCount || '',
+    Phone: r.phone || '',
+    Address: r.address || '',
+    Website: r.website || '',
+    Email: (r.emails && r.emails.length) ? r.emails.join(', ') : '',
+    'Maps URL': r.mapsUrl || '',
+  }));
+
+  const sheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Leads');
+  XLSX.writeFile(workbook, excelFile);
 }
 
 function sanitizeForFilename(query) {
@@ -263,8 +283,13 @@ async function main() {
   const durationMinutes = Number(((endTime - startTime) / 60000).toFixed(2));
 
   const resultsDir = path.join(__dirname, 'results');
+  const excelDir = path.join(resultsDir, 'excel');
   fs.mkdirSync(resultsDir, { recursive: true });
-  const outFile = path.join(resultsDir, `${sanitizeForFilename(query)}.json`);
+  fs.mkdirSync(excelDir, { recursive: true });
+
+  const baseName = sanitizeForFilename(query);
+  const outFile = path.join(resultsDir, `${baseName}.json`);
+  const excelFile = path.join(excelDir, `${baseName}.xlsx`);
 
   const output = {
     query,
@@ -277,7 +302,10 @@ async function main() {
   };
 
   fs.writeFileSync(outFile, JSON.stringify(output, null, 2), 'utf-8');
+  writeExcelSummary(results, excelFile);
+
   console.log(`Done. Saved ${results.length} records to ${outFile}`);
+  console.log(`Saved excel summary to ${excelFile}`);
   console.log(`Started: ${startIST.timestamp}  Ended: ${endIST.timestamp}  Duration: ${durationMinutes} min\n`);
 
   await browser.close();

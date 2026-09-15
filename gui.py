@@ -10,6 +10,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 
@@ -30,6 +31,9 @@ class ScraperGUI(tk.Tk):
         self.output_queue = queue.Queue()
         self.process = None
         self.last_out_file = None
+        self.last_excel_file = None
+        self.start_time = None
+        self.timer_running = False
 
         self._build_widgets()
         self.after(100, self._poll_queue)
@@ -61,6 +65,14 @@ class ScraperGUI(tk.Tk):
         )
         self.open_folder_button.pack(side="left", padx=(8, 0))
 
+        self.open_excel_button = ttk.Button(
+            btn_frame, text="Open Excel result", command=self.on_open_excel, state="disabled"
+        )
+        self.open_excel_button.pack(side="left", padx=(8, 0))
+
+        self.timer_label = ttk.Label(btn_frame, text="Elapsed: 00:00", padding=(10, 0))
+        self.timer_label.pack(side="right")
+
         self.status_label = ttk.Label(self, text="Idle", padding=(10, 6))
         self.status_label.pack(fill="x")
 
@@ -80,12 +92,30 @@ class ScraperGUI(tk.Tk):
 
         self.run_button.config(state="disabled")
         self.open_folder_button.config(state="disabled")
+        self.open_excel_button.config(state="disabled")
         self.last_out_file = None
+        self.last_excel_file = None
         self._clear_log()
         self.status_label.config(text="Running...")
 
+        self.start_time = time.time()
+        self.timer_running = True
+        self._tick_timer()
+
         thread = threading.Thread(target=self._run_scraper, args=(query, count_raw), daemon=True)
         thread.start()
+
+    @staticmethod
+    def _format_elapsed(seconds):
+        minutes, secs = divmod(int(seconds), 60)
+        return f"{minutes:02d}:{secs:02d}"
+
+    def _tick_timer(self):
+        if not self.timer_running:
+            return
+        elapsed = time.time() - self.start_time
+        self.timer_label.config(text=f"Elapsed: {self._format_elapsed(elapsed)}")
+        self.after(500, self._tick_timer)
 
     def _run_scraper(self, query, count):
         base = app_dir()
@@ -122,6 +152,11 @@ class ScraperGUI(tk.Tk):
                     self.last_out_file = line.split("records to", 1)[1].strip()
                 except IndexError:
                     pass
+            if "Saved excel summary to" in line:
+                try:
+                    self.last_excel_file = line.split("Saved excel summary to", 1)[1].strip()
+                except IndexError:
+                    pass
 
         self.process.wait()
         self.output_queue.put(("done", self.process.returncode))
@@ -141,13 +176,20 @@ class ScraperGUI(tk.Tk):
         self.after(100, self._poll_queue)
 
     def _on_finished(self, returncode):
+        self.timer_running = False
+        elapsed = time.time() - self.start_time if self.start_time else 0
+        elapsed_text = self._format_elapsed(elapsed)
+        self.timer_label.config(text=f"Elapsed: {elapsed_text}")
+
         self.run_button.config(state="normal")
         if returncode == 0:
-            self.status_label.config(text="Done.")
+            self.status_label.config(text=f"Done. Took {elapsed_text} (mm:ss).")
             if self.last_out_file:
                 self.open_folder_button.config(state="normal")
+            if self.last_excel_file:
+                self.open_excel_button.config(state="normal")
         else:
-            self.status_label.config(text=f"Failed (exit code {returncode}).")
+            self.status_label.config(text=f"Failed (exit code {returncode}) after {elapsed_text}.")
 
     def on_open_results(self):
         results_dir = os.path.join(app_dir(), "results")
@@ -155,6 +197,12 @@ class ScraperGUI(tk.Tk):
             os.startfile(results_dir)
         else:
             messagebox.showinfo("Not found", "No results folder yet.")
+
+    def on_open_excel(self):
+        if self.last_excel_file and os.path.isfile(self.last_excel_file):
+            os.startfile(self.last_excel_file)
+        else:
+            messagebox.showinfo("Not found", "No Excel result file yet.")
 
     def _append_log(self, text):
         self.log.config(state="normal")
