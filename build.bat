@@ -3,7 +3,7 @@ REM Rebuilds GMapLeadsGen.exe from gui.py. Run this after changing gui.py.
 
 cd /d "%~dp0"
 
-python -m PyInstaller --onefile --windowed --name GMapLeadsGen gui.py
+python -m PyInstaller --onefile --windowed --name GMapLeadsGen --icon assets\logo.png --add-data "assets;assets" gui.py
 if errorlevel 1 (
     echo Build failed.
     exit /b 1

@@ -46,17 +46,26 @@ python gui.py
 
 Requires Node.js and the npm dependencies installed as above; `gui.py` just drives `scraper.js`, it doesn't reimplement the scraping.
 
+Running from source also needs [Pillow](https://pypi.org/project/pillow/) for the logo/background: `pip install -r requirements.txt`.
+
+### Branding (assets/)
+
+- `assets/logo.png` — used as the window/taskbar icon, and as the `.exe`'s own icon.
+- `assets/background.png` — stretched to fill the window as a background, rescaling live as the window is resized.
+
+Swap either file for your own image (same filenames) and rebuild.
+
 ### Building GMapLeadsGen.exe
 
 The GUI is also distributed as a standalone Windows executable, built with [PyInstaller](https://pyinstaller.org/) (`pip install pyinstaller` if you don't have it).
 
-Whenever you change `gui.py`, rebuild the exe by running:
+Whenever you change `gui.py` or the files in `assets/`, rebuild the exe by running:
 
 ```
 build.bat
 ```
 
-This runs PyInstaller, copies the fresh `dist\GMapLeadsGen.exe` over the one at the project root, cleans up the leftover `build/`, `dist/`, and `.spec` files, and also packages everything a teammate needs into `GMapLeadsGen.zip`.
+This runs PyInstaller (bundling `assets/` into the exe and setting `assets/logo.png` as its icon), copies the fresh `dist\GMapLeadsGen.exe` over the one at the project root, cleans up the leftover `build/`, `dist/`, and `.spec` files, and also packages everything a teammate needs into `GMapLeadsGen.zip`.
 
 Note: `GMapLeadsGen.exe` only bundles the GUI — it still shells out to `node scraper.js` at runtime, so Node.js and this project's npm dependencies (`playwright`, `xlsx`) must be present next to it.
 

@@ -4,6 +4,9 @@ dist/
 build/
 *.spec
 GMapLeadsGen.zip
+GMapLeadsGen-package/
+__pycache__/
+*.pyc
 
 # Logs
 npm-debug.log*

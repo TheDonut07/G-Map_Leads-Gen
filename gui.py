@@ -14,11 +14,22 @@ import time
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 
+from PIL import Image, ImageTk
+
 
 def app_dir():
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
+
+
+def resource_path(*parts):
+    """Locate a bundled asset, whether running from source or from the PyInstaller exe."""
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", app_dir())
+    else:
+        base = app_dir()
+    return os.path.join(base, *parts)
 
 
 class ScraperGUI(tk.Tk):
@@ -35,11 +46,72 @@ class ScraperGUI(tk.Tk):
         self.start_time = None
         self.timer_running = False
 
+        self._set_window_icon()
+        self._build_background()
         self._build_widgets()
         self.after(100, self._poll_queue)
 
+    def _set_window_icon(self):
+        icon_path = resource_path("assets", "logo.png")
+        if not os.path.exists(icon_path):
+            return
+        try:
+            self._icon_photo = ImageTk.PhotoImage(Image.open(icon_path))
+            self.iconphoto(True, self._icon_photo)
+        except Exception:
+            pass
+
+    def _build_background(self):
+        bg_path = resource_path("assets", "background.png")
+        self._bg_original = None
+        if os.path.exists(bg_path):
+            try:
+                self._bg_original = Image.open(bg_path).convert("RGB")
+            except Exception:
+                self._bg_original = None
+
+        self.bg_label = tk.Label(self, borderwidth=0)
+        self.bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+        self.bg_label.lower()
+
+        self._bg_last_size = None
+        self._card_last_size = None
+        self._card_margin = 28
+        self.bind("<Configure>", self._on_root_configure)
+        self._resize_background(720, 520)
+
+    def _on_root_configure(self, event):
+        if event.widget is not self:
+            return
+        self._resize_background(event.width, event.height)
+        self._resize_card(event.width, event.height)
+
+    def _resize_card(self, width, height):
+        if not hasattr(self, "card"):
+            return
+        if (width, height) == self._card_last_size:
+            return
+        self._card_last_size = (width, height)
+        margin = self._card_margin
+        card_w = max(1, width - margin * 2)
+        card_h = max(1, height - margin * 2)
+        self.card.place(x=margin, y=margin, width=card_w, height=card_h)
+
+    def _resize_background(self, width, height):
+        if not self._bg_original or width <= 1 or height <= 1:
+            return
+        if (width, height) == self._bg_last_size:
+            return
+        self._bg_last_size = (width, height)
+        resized = self._bg_original.resize((width, height), Image.LANCZOS)
+        self._bg_photo = ImageTk.PhotoImage(resized)
+        self.bg_label.configure(image=self._bg_photo)
+
     def _build_widgets(self):
-        form = ttk.Frame(self, padding=10)
+        self.card = ttk.Frame(self, padding=14, relief="raised", borderwidth=1)
+        self._resize_card(720, 520)
+
+        form = ttk.Frame(self.card, padding=(0, 0, 0, 10))
         form.pack(fill="x")
 
         ttk.Label(form, text="Search term:").grid(row=0, column=0, sticky="w")
@@ -54,7 +126,7 @@ class ScraperGUI(tk.Tk):
 
         form.columnconfigure(1, weight=1)
 
-        btn_frame = ttk.Frame(self, padding=(10, 0))
+        btn_frame = ttk.Frame(self.card)
         btn_frame.pack(fill="x")
 
         self.run_button = ttk.Button(btn_frame, text="Run", command=self.on_run)
@@ -73,11 +145,11 @@ class ScraperGUI(tk.Tk):
         self.timer_label = ttk.Label(btn_frame, text="Elapsed: 00:00", padding=(10, 0))
         self.timer_label.pack(side="right")
 
-        self.status_label = ttk.Label(self, text="Idle", padding=(10, 6))
+        self.status_label = ttk.Label(self.card, text="Idle", padding=(0, 6))
         self.status_label.pack(fill="x")
 
-        self.log = scrolledtext.ScrolledText(self, state="disabled", wrap="word")
-        self.log.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.log = scrolledtext.ScrolledText(self.card, state="disabled", wrap="word", height=10)
+        self.log.pack(fill="both", expand=True, pady=(0, 0))
 
     def on_run(self):
         query = self.query_entry.get().strip()
