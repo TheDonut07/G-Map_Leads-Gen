@@ -1,6 +1,8 @@
 node_modules/
 results/
 dist/
+build/
+*.spec
 
 # Logs
 npm-debug.log*
