@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import tkinter as tk
+from datetime import datetime
 from tkinter import ttk, scrolledtext, messagebox
 
 from PIL import Image, ImageTk
@@ -95,6 +96,9 @@ class ScraperGUI(tk.Tk):
         self.batch_file_path = None
         self.stop_flag_path = None
         self.stopped_by_user = False
+        self.is_continue_mode = False
+        self.resume_data = None
+        self.last_run_task_name = None
 
         self._int_validate_cmd = self.register(self._validate_int)
 
@@ -260,10 +264,35 @@ class ScraperGUI(tk.Tk):
         self.status_label = ttk.Label(self.card, text="Idle", font=STATUS_FONT, padding=(0, 8))
         self.status_label.pack(fill="x")
 
+        # Packed with side="bottom" so it stays pinned at the very bottom of the window,
+        # outside both the scrollable rows area and the log — always visible.
+        task_frame = ttk.Frame(self.card, padding=(0, 8, 0, 0))
+        task_frame.pack(side="bottom", fill="x")
+        ttk.Label(task_frame, text="Task name:", font=BOLD_FONT).pack(side="left")
+        self.task_name_entry = ttk.Entry(task_frame)
+        self.task_name_entry.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        add_placeholder(self.task_name_entry, self._default_task_name())
+
         self.log = scrolledtext.ScrolledText(self.card, state="disabled", wrap="word", height=20, font=LOG_FONT)
         self.log.pack(fill="both", expand=True, pady=(0, 0))
 
         self._update_row_controls()
+
+    def _default_task_name(self):
+        date_str = datetime.now().strftime("%d%B%Y")
+        return f"SearchTerms{len(self.term_rows)}_{date_str}"
+
+    def _update_task_name_placeholder(self):
+        entry = getattr(self, "task_name_entry", None)
+        if entry is None:
+            return
+        if getattr(entry, "_has_placeholder", True):
+            new_default = self._default_task_name()
+            entry.delete(0, "end")
+            entry.insert(0, new_default)
+            entry.configure(foreground=PLACEHOLDER_COLOR)
+            entry._placeholder = new_default
+            entry._has_placeholder = True
 
     def _bind_rows_mousewheel(self, widget):
         widget.bind("<MouseWheel>", self._on_rows_mousewheel)
@@ -346,6 +375,7 @@ class ScraperGUI(tk.Tk):
         at_cap = len(self.term_rows) >= MAX_TERMS
         self.add_row_button.config(state="disabled" if at_cap else "normal")
         self.term_count_label.config(text=f"{len(self.term_rows)} / {MAX_TERMS} search terms")
+        self._update_task_name_placeholder()
 
     def _collect_terms(self):
         """Returns (terms, error_message). terms is a list of {"query", "count"} dicts."""
@@ -369,16 +399,52 @@ class ScraperGUI(tk.Tk):
 
     # -- run -------------------------------------------------------------
 
+    def _build_continue_terms(self, current_terms):
+        """Merge current row targets with previously saved partial results, matched by
+        search-term text, so already-collected listings aren't re-scraped."""
+        prior_by_query = {}
+        if self.resume_data:
+            for t in self.resume_data.get("terms", []):
+                prior_by_query[t.get("query", "")] = t
+
+        batch_terms = []
+        for t in current_terms:
+            prior = prior_by_query.get(t["query"])
+            prior_results = prior["results"] if prior else []
+            done = len(prior_results)
+            remaining = max(0, t["count"] - done)
+            batch_terms.append({
+                "query": t["query"],
+                "count": remaining,
+                "skip": done,
+                "priorResults": prior_results,
+            })
+        return batch_terms
+
     def on_run(self):
         terms, error = self._collect_terms()
         if error:
             messagebox.showerror("Invalid input", error)
             return
 
+        if self.is_continue_mode:
+            task_name = self.last_run_task_name
+            batch_terms = self._build_continue_terms(terms)
+        else:
+            task_name = entry_value(self.task_name_entry) or self._default_task_name()
+            self.last_run_task_name = task_name
+            self.resume_data = None
+            batch_terms = [
+                {"query": t["query"], "count": t["count"], "skip": 0, "priorResults": []}
+                for t in terms
+            ]
+
+        batch_payload = {"taskName": task_name, "terms": batch_terms}
+
         batch_fd, batch_path = tempfile.mkstemp(suffix=".json", prefix="gmap_batch_")
         try:
             with os.fdopen(batch_fd, "w", encoding="utf-8") as f:
-                json.dump(terms, f)
+                json.dump(batch_payload, f)
         except Exception as exc:
             messagebox.showerror("Error", f"Could not write batch file: {exc}")
             return
@@ -393,8 +459,10 @@ class ScraperGUI(tk.Tk):
         self.open_excel_button.config(state="disabled")
         self.last_out_file = None
         self.last_excel_file = None
-        self._clear_log()
-        self.status_label.config(text=f"Running... (0/{len(terms)} terms)")
+        if not self.is_continue_mode:
+            self._clear_log()
+        verb = "Continuing" if self.is_continue_mode else "Running"
+        self.status_label.config(text=f"{verb}... (0/{len(batch_terms)} terms)")
 
         self.start_time = time.time()
         self.timer_running = True
@@ -404,6 +472,29 @@ class ScraperGUI(tk.Tk):
             target=self._run_scraper, args=(batch_path, self.stop_flag_path), daemon=True
         )
         thread.start()
+
+    def _enter_continue_mode(self):
+        self.resume_data = None
+        if self.last_out_file and os.path.isfile(self.last_out_file):
+            try:
+                with open(self.last_out_file, "r", encoding="utf-8") as f:
+                    self.resume_data = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                self.resume_data = None
+
+        if self.resume_data is None:
+            self._exit_continue_mode()
+            return
+
+        self.is_continue_mode = True
+        self.run_button.config(text="Continue")
+        self.task_name_entry.config(state="disabled")
+
+    def _exit_continue_mode(self):
+        self.is_continue_mode = False
+        self.resume_data = None
+        self.run_button.config(text="Run")
+        self.task_name_entry.config(state="normal")
 
     def on_stop_save(self):
         if not self.stop_flag_path:
@@ -504,7 +595,8 @@ class ScraperGUI(tk.Tk):
                 elif kind == "progress":
                     current, total = payload
                     if not self.stopped_by_user:
-                        self.status_label.config(text=f"Running... ({current}/{total} terms)")
+                        verb = "Continuing" if self.is_continue_mode else "Running"
+                        self.status_label.config(text=f"{verb}... ({current}/{total} terms)")
                 elif kind == "stopped":
                     self.stopped_by_user = True
                 elif kind == "error":
@@ -526,8 +618,10 @@ class ScraperGUI(tk.Tk):
         if returncode == 0:
             if self.stopped_by_user:
                 self.status_label.config(text=f"Stopped by user — partial results saved. Took {elapsed_text} (mm:ss).")
+                self._enter_continue_mode()
             else:
                 self.status_label.config(text=f"Done. Took {elapsed_text} (mm:ss).")
+                self._exit_continue_mode()
             if self.last_out_file:
                 self.open_folder_button.config(state="normal")
             if self.last_excel_file:

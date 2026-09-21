@@ -2,9 +2,21 @@
 //
 // Single term:  node scraper.js "Appliance repair service in Sacramento, CA, USA" 10
 // Batch:        node scraper.js --batch batch.json [--stop-flag stop.flag]
-//               batch.json: [{ "query": "...", "count": 10 }, ...]
-//               stop.flag: if this file exists, the run stops after the current
-//               listing (and current term) and saves whatever was collected so far.
+//
+//               batch.json is either a plain array of { query, count }, or an object:
+//               {
+//                 "taskName": "...",                 // used as the output file base name
+//                 "terms": [
+//                   { "query": "...", "count": 10, "skip": 0, "priorResults": [] },
+//                   ...
+//                 ]
+//               }
+//               skip/priorResults let a "Continue" run resume a term without re-scraping
+//               listings a previous run already collected; count 0 carries priorResults
+//               forward untouched.
+//
+//               stop.flag: if this file exists, the run stops after the current listing
+//               (and current term) and saves whatever was collected so far.
 
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -27,28 +39,48 @@ function parseArgs() {
   return { argv, stopFlagPath };
 }
 
-function parseTerms(argv) {
+function loadRun(argv) {
   const mode = argv[0];
 
   if (mode === '--batch') {
     const batchPath = argv[1];
     if (!batchPath) {
-      throw new Error('--batch requires a path to a JSON file of [{ query, count }, ...]');
+      throw new Error('--batch requires a path to a JSON file');
     }
     const raw = fs.readFileSync(batchPath, 'utf-8');
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) {
+
+    let taskName = null;
+    let rawTerms;
+    if (Array.isArray(parsed)) {
+      rawTerms = parsed;
+    } else {
+      taskName = parsed.taskName ? String(parsed.taskName).trim() : null;
+      rawTerms = parsed.terms;
+    }
+
+    if (!Array.isArray(rawTerms) || rawTerms.length === 0) {
       throw new Error('Batch file must contain a non-empty array of { query, count }');
     }
-    return parsed.map((t) => ({
-      query: String(t.query || '').trim(),
-      count: parseInt(t.count, 10) || 10,
-    })).filter((t) => t.query);
+
+    const terms = rawTerms
+      .map((t) => {
+        const parsedCount = parseInt(t.count, 10);
+        return {
+          query: String(t.query || '').trim(),
+          count: Number.isFinite(parsedCount) ? parsedCount : 10,
+          skip: parseInt(t.skip, 10) || 0,
+          priorResults: Array.isArray(t.priorResults) ? t.priorResults : [],
+        };
+      })
+      .filter((t) => t.query);
+
+    return { terms, taskName };
   }
 
   const query = argv[0] || 'Appliance repair service in Sacramento, CA, USA';
   const count = parseInt(argv[1] || '10', 10);
-  return [{ query, count }];
+  return { terms: [{ query, count, skip: 0, priorResults: [] }], taskName: null };
 }
 
 function batchBaseName(terms, startIST) {
@@ -60,30 +92,46 @@ function batchBaseName(terms, startIST) {
 
 async function main() {
   const { argv, stopFlagPath } = parseArgs();
-  const terms = parseTerms(argv);
+  const { terms, taskName } = loadRun(argv);
 
   const stopRequested = () => !!(stopFlagPath && fs.existsSync(stopFlagPath));
 
   const startTime = Date.now();
   const startIST = getISTParts(new Date(startTime));
 
-  const browser = await chromium.launch({ headless: false });
-  const context = await browser.newContext({
-    viewport: { width: 1400, height: 900 },
-  });
-  const page = await context.newPage();
+  const needsScraping = terms.some((t) => t.count > 0);
+  let browser = null;
+  let context = null;
+  let page = null;
+
+  if (needsScraping) {
+    browser = await chromium.launch({ headless: false });
+    context = await browser.newContext({
+      viewport: { width: 1400, height: 900 },
+    });
+    page = await context.newPage();
+  }
 
   const termResults = [];
   let stoppedByUser = false;
 
   for (let i = 0; i < terms.length; i++) {
-    const { query, count } = terms[i];
-    console.log(`\n[Term ${i + 1}/${terms.length}] Searching Google Maps for: "${query}"  (target ${count} results)\n`);
+    const { query, count, skip, priorResults } = terms[i];
 
-    const results = await scrapeQuery(page, context, query, count, stopRequested);
+    if (count <= 0) {
+      termResults.push({ query, results: priorResults });
+      console.log(`\n[Term ${i + 1}/${terms.length}] "${query}" already complete (${priorResults.length} record(s) carried over).`);
+      continue;
+    }
+
+    const resumeNote = skip ? `, resuming after ${skip} already collected` : '';
+    console.log(`\n[Term ${i + 1}/${terms.length}] Searching Google Maps for: "${query}"  (target ${count} more result(s)${resumeNote})\n`);
+
+    const newResults = await scrapeQuery(page, context, query, count, stopRequested, skip);
+    const results = [...priorResults, ...newResults];
     termResults.push({ query, results });
 
-    console.log(`[Term ${i + 1}/${terms.length}] Done. ${results.length} record(s).`);
+    console.log(`[Term ${i + 1}/${terms.length}] Done. ${results.length} record(s) total.`);
 
     if (stopRequested()) {
       stoppedByUser = true;
@@ -92,7 +140,9 @@ async function main() {
     }
   }
 
-  await browser.close();
+  if (browser) {
+    await browser.close();
+  }
 
   const endTime = Date.now();
   const endIST = getISTParts(new Date(endTime));
@@ -103,13 +153,14 @@ async function main() {
   fs.mkdirSync(resultsDir, { recursive: true });
   fs.mkdirSync(excelDir, { recursive: true });
 
-  const baseName = batchBaseName(terms, startIST);
+  const baseName = (taskName && sanitizeForFilename(taskName)) || batchBaseName(terms, startIST);
   const outFile = path.join(resultsDir, `${baseName}.json`);
   const excelFile = path.join(excelDir, `${baseName}.xlsx`);
 
   const totalRecords = termResults.reduce((sum, t) => sum + t.results.length, 0);
 
   const output = {
+    taskName: taskName || baseName,
     terms: termResults.map((t) => ({
       query: t.query,
       resultCount: t.results.length,
