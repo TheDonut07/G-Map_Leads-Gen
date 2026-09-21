@@ -16,10 +16,10 @@ Runs headed (visible browser window) so you can watch it work and catch issues (
 
 ### Option A — Ready-to-use package (Windows, recommended)
 
-For anyone who just wants to run the tool. You get `GMapLeadsGen.zip` (see [Sharing it](#sharing-it-with-someone-else) for how it's produced).
+For anyone who just wants to run the tool. Download `GMapLeadsGen.zip` from the [Releases page](https://github.com/TheDonut07/G-Map_Leads-Gen/releases) (see [Sharing it](#sharing-it-with-someone-else) for how it's produced).
 
 1. Install [Node.js](https://nodejs.org/) (LTS version) if you don't have it.
-2. Unzip `GMapLeadsGen.zip` somewhere permanent (e.g. `C:\GMapLeadsGen`). Keep all the files together in one folder.
+2. Download and unzip `GMapLeadsGen.zip` from Releases somewhere permanent (e.g. `C:\GMapLeadsGen`). Keep all the files together in one folder.
 3. Double-click `setup.bat`. It checks for Node.js, runs `npm install`, and downloads Playwright's Chromium browser (needs internet; can take a few minutes the first time). You only need to do this once.
 4. Double-click `GMapLeadsGen.exe` to launch the app.
 
@@ -228,7 +228,7 @@ Swap either file for your own image (same filenames) and rebuild.
 
 ### Sharing it with someone else
 
-`GMapLeadsGen.zip` (produced by `build.bat`) contains everything needed to hand off the tool: `GMapLeadsGen.exe`, `scraper.js`, the `lib/` folder, `package.json`, `package-lock.json`, and `setup.bat`. Send them the zip and point them at [Option A](#option-a--ready-to-use-package-windows-recommended) above.
+`GMapLeadsGen.zip` (produced by `build.bat`) contains everything needed to hand off the tool: `GMapLeadsGen.exe`, `scraper.js`, the `lib/` folder, `package.json`, `package-lock.json`, and `setup.bat`. The zip is published on the [Releases page](https://github.com/TheDonut07/G-Map_Leads-Gen/releases) — send people there, or send them the zip directly, and point them at [Option A](#option-a--ready-to-use-package-windows-recommended) above.
 
 ## Notes
 
