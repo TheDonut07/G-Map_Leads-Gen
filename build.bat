@@ -26,6 +26,7 @@ copy /y scraper.js "%PKG_DIR%\" >nul
 copy /y package.json "%PKG_DIR%\" >nul
 copy /y package-lock.json "%PKG_DIR%\" >nul
 copy /y setup.bat "%PKG_DIR%\" >nul
+xcopy /y /i /e lib "%PKG_DIR%\lib\" >nul
 
 if exist GMapLeadsGen.zip del /q GMapLeadsGen.zip
 powershell -NoProfile -Command "Compress-Archive -Path '%PKG_DIR%\*' -DestinationPath 'GMapLeadsGen.zip' -Force"
