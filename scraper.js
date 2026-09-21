@@ -1,231 +1,50 @@
 // Google Maps lead scraper — live console test (Playwright, headed/incognito)
-// Usage: node scraper.js "Appliance repair service in Sacramento, CA, USA" 10
+//
+// Single term:  node scraper.js "Appliance repair service in Sacramento, CA, USA" 10
+// Batch:        node scraper.js --batch batch.json
+//               batch.json: [{ "query": "...", "count": 10 }, ...]
 
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
-const XLSX = require('xlsx');
 
-const EMAIL_REGEX = /[a-zA-Z0-9.\-_+]+@[a-zA-Z0-9.\-_]+\.[a-zA-Z]{2,}/g;
-const IGNORE_EMAIL_SUFFIXES = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'];
+const { sanitizeForFilename, getISTParts } = require('./lib/util');
+const { scrapeQuery } = require('./lib/scrape');
+const { writeBatchWorkbook } = require('./lib/excel');
 
-function cleanEmails(matches) {
-  if (!matches) return [];
-  const uniq = new Set();
-  for (const m of matches) {
-    const lower = m.toLowerCase();
-    if (IGNORE_EMAIL_SUFFIXES.some((ext) => lower.endsWith(ext))) continue;
-    if (lower.includes('example.com') || lower.includes('sentry.io') || lower.includes('wixpress.com')) continue;
-    uniq.add(m);
-  }
-  return [...uniq];
-}
+function parseTerms() {
+  const mode = process.argv[2];
 
-async function extractEmailsFromPage(page) {
-  try {
-    const html = await page.content();
-    const mailtoHrefs = await page.$$eval('a[href^="mailto:"]', (as) =>
-      as.map((a) => a.getAttribute('href').replace('mailto:', '').split('?')[0])
-    ).catch(() => []);
-    const bodyMatches = html.match(EMAIL_REGEX) || [];
-    return cleanEmails([...mailtoHrefs, ...bodyMatches]);
-  } catch {
-    return [];
-  }
-}
-
-async function findContactLink(page) {
-  try {
-    const links = await page.$$eval('a[href]', (as) =>
-      as
-        .map((a) => ({ href: a.href, text: (a.textContent || '').toLowerCase() }))
-        .filter((l) => l.href && l.href.startsWith('http'))
-    );
-    const keywords = ['contact', 'about', 'get-in-touch', 'reach-us'];
-    const match = links.find((l) =>
-      keywords.some((kw) => l.text.includes(kw) || l.href.toLowerCase().includes(kw))
-    );
-    return match ? match.href : null;
-  } catch {
-    return null;
-  }
-}
-
-async function scrapeWebsiteForEmail(context, websiteUrl) {
-  if (!websiteUrl) return [];
-  const page = await context.newPage();
-  let emails = [];
-  try {
-    await page.goto(websiteUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    emails = await extractEmailsFromPage(page);
-
-    if (emails.length === 0) {
-      const contactUrl = await findContactLink(page);
-      if (contactUrl) {
-        await page.goto(contactUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-        emails = await extractEmailsFromPage(page);
-      }
+  if (mode === '--batch') {
+    const batchPath = process.argv[3];
+    if (!batchPath) {
+      throw new Error('--batch requires a path to a JSON file of [{ query, count }, ...]');
     }
-  } catch (err) {
-    console.log(`   (website load failed: ${err.message.split('\n')[0]})`);
-  } finally {
-    await page.close().catch(() => {});
-  }
-  return emails;
-}
-
-async function autoScrollFeed(page, maxResults) {
-  const feedSelector = 'div[role="feed"]';
-  await page.waitForSelector(feedSelector, { timeout: 15000 });
-
-  let lastCount = 0;
-  let sameCountTries = 0;
-
-  while (sameCountTries < 4) {
-    const count = await page.$$eval(`${feedSelector} a.hfpxzc`, (as) => as.length);
-    if (count >= maxResults) break;
-
-    await page.$eval(feedSelector, (el) => el.scrollBy(0, el.scrollHeight));
-    await page.waitForTimeout(1500 + Math.random() * 800);
-
-    if (count === lastCount) {
-      sameCountTries++;
-    } else {
-      sameCountTries = 0;
+    const raw = fs.readFileSync(batchPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      throw new Error('Batch file must contain a non-empty array of { query, count }');
     }
-    lastCount = count;
+    return parsed.map((t) => ({
+      query: String(t.query || '').trim(),
+      count: parseInt(t.count, 10) || 10,
+    })).filter((t) => t.query);
   }
+
+  const query = process.argv[2] || 'Appliance repair service in Sacramento, CA, USA';
+  const count = parseInt(process.argv[3] || '10', 10);
+  return [{ query, count }];
 }
 
-async function getResultLinks(page, maxResults) {
-  const links = await page.$$eval('div[role="feed"] a.hfpxzc', (as) =>
-    as.map((a) => a.href)
-  );
-  return links.slice(0, maxResults);
-}
-
-function textOrNull(val) {
-  return val && val.trim().length > 0 ? val.trim() : null;
-}
-
-function writeExcelSummary(results, excelFile) {
-  const rows = results.map((r) => ({
-    Name: r.name || '',
-    Category: r.category || '',
-    Rating: r.rating || '',
-    Reviews: r.reviewCount || '',
-    Phone: r.phone || '',
-    Address: r.address || '',
-    Website: r.website || '',
-    Email: (r.emails && r.emails.length) ? r.emails.join(', ') : '',
-    'Maps URL': r.mapsUrl || '',
-  }));
-
-  const sheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, sheet, 'Leads');
-  XLSX.writeFile(workbook, excelFile);
-}
-
-function sanitizeForFilename(query) {
-  return query
-    .trim()
-    .replace(/,\s*/g, '-')
-    .replace(/\s+/g, '_')
-    .replace(/[/\\:*?"<>|]/g, '')
-    .replace(/-+/g, '-')
-    .replace(/_+/g, '_');
-}
-
-function getISTParts(date) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Kolkata',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(date);
-
-  const map = {};
-  for (const p of parts) map[p.type] = p.value;
-
-  return {
-    date: `${map.year}-${map.month}-${map.day}`,
-    timestamp: `${map.year}-${map.month}-${map.day} ${map.hour}:${map.minute}:${map.second} IST`,
-  };
-}
-
-const FIELD_TIMEOUT = 4000; // avoid Playwright's 30s default wait on selectors that simply don't exist for a listing
-
-async function scrapeListingDetails(page) {
-  const name = await page
-    .locator('h1.DUwDvf, h1.fontHeadlineLarge')
-    .first()
-    .textContent({ timeout: FIELD_TIMEOUT })
-    .catch(() => null);
-
-  const ratingText = await page
-    .locator('div.F7nice span[aria-hidden="true"]')
-    .first()
-    .textContent({ timeout: FIELD_TIMEOUT })
-    .catch(() => null);
-
-  const reviewCountText = await page
-    .locator('div.F7nice span[aria-label*="reviews" i]')
-    .first()
-    .getAttribute('aria-label', { timeout: FIELD_TIMEOUT })
-    .catch(() => null);
-
-  const address = await page
-    .locator('button[data-item-id="address"]')
-    .first()
-    .getAttribute('aria-label', { timeout: FIELD_TIMEOUT })
-    .catch(() => null);
-
-  const phone = await page
-    .locator('button[data-item-id^="phone:tel:"]')
-    .first()
-    .getAttribute('aria-label', { timeout: FIELD_TIMEOUT })
-    .catch(() => null);
-
-  const website = await page
-    .locator('a[data-item-id="authority"]')
-    .first()
-    .getAttribute('href', { timeout: FIELD_TIMEOUT })
-    .catch(() => null);
-
-  const category = await page
-    .locator('button.DkEaL')
-    .first()
-    .textContent({ timeout: FIELD_TIMEOUT })
-    .catch(() => null);
-
-  const reviewCount = reviewCountText
-    ? (reviewCountText.match(/[\d,]+/) || [null])[0]?.replace(/,/g, '')
-    : null;
-
-  const phoneClean = phone ? phone.replace(/^Phone:\s*/i, '').trim() : null;
-  const addressClean = address ? address.replace(/^Address:\s*/i, '').trim() : null;
-
-  return {
-    name: textOrNull(name),
-    category: textOrNull(category),
-    rating: textOrNull(ratingText),
-    reviewCount: reviewCount,
-    address: addressClean,
-    phone: phoneClean,
-    website: textOrNull(website),
-  };
+function batchBaseName(terms, startIST) {
+  if (terms.length === 1) {
+    return sanitizeForFilename(terms[0].query);
+  }
+  return `batch_${startIST.compact}_${terms.length}terms`;
 }
 
 async function main() {
-  const query = process.argv[2] || 'Appliance repair service in Sacramento, CA, USA';
-  const maxResults = parseInt(process.argv[3] || '10', 10);
-
-  console.log(`\nSearching Google Maps for: "${query}"  (target ${maxResults} results)\n`);
+  const terms = parseTerms();
 
   const startTime = Date.now();
   const startIST = getISTParts(new Date(startTime));
@@ -236,47 +55,19 @@ async function main() {
   });
   const page = await context.newPage();
 
-  const mapsUrl = `https://www.google.com/maps/search/${encodeURIComponent(query)}`;
-  await page.goto(mapsUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(2500);
+  const termResults = [];
 
-  // Dismiss consent dialog if present
-  const consentButton = page.locator('button:has-text("Accept all")').first();
-  if (await consentButton.isVisible().catch(() => false)) {
-    await consentButton.click().catch(() => {});
-    await page.waitForTimeout(1000);
+  for (let i = 0; i < terms.length; i++) {
+    const { query, count } = terms[i];
+    console.log(`\n[Term ${i + 1}/${terms.length}] Searching Google Maps for: "${query}"  (target ${count} results)\n`);
+
+    const results = await scrapeQuery(page, context, query, count);
+    termResults.push({ query, results });
+
+    console.log(`[Term ${i + 1}/${terms.length}] Done. ${results.length} record(s).`);
   }
 
-  await autoScrollFeed(page, maxResults);
-  const links = await getResultLinks(page, maxResults);
-  console.log(`Found ${links.length} listing(s). Visiting each...\n`);
-
-  const results = [];
-
-  for (let i = 0; i < links.length; i++) {
-    const href = links[i];
-    console.log(`[${i + 1}/${links.length}] Opening listing...`);
-    await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-    await page.waitForTimeout(1500);
-
-    const details = await scrapeListingDetails(page);
-    let emails = [];
-    if (details.website) {
-      emails = await scrapeWebsiteForEmail(context, details.website);
-    }
-
-    const record = { ...details, emails, mapsUrl: href };
-    results.push(record);
-
-    console.log(`   Name:     ${record.name}`);
-    console.log(`   Category: ${record.category}`);
-    console.log(`   Rating:   ${record.rating}  (${record.reviewCount} reviews)`);
-    console.log(`   Phone:    ${record.phone}`);
-    console.log(`   Address:  ${record.address}`);
-    console.log(`   Website:  ${record.website}`);
-    console.log(`   Emails:   ${emails.length ? emails.join(', ') : 'none found'}`);
-    console.log('');
-  }
+  await browser.close();
 
   const endTime = Date.now();
   const endIST = getISTParts(new Date(endTime));
@@ -287,14 +78,20 @@ async function main() {
   fs.mkdirSync(resultsDir, { recursive: true });
   fs.mkdirSync(excelDir, { recursive: true });
 
-  const baseName = sanitizeForFilename(query);
+  const baseName = batchBaseName(terms, startIST);
   const outFile = path.join(resultsDir, `${baseName}.json`);
   const excelFile = path.join(excelDir, `${baseName}.xlsx`);
 
+  const totalRecords = termResults.reduce((sum, t) => sum + t.results.length, 0);
+
   const output = {
-    query,
-    resultCount: results.length,
-    results,
+    terms: termResults.map((t) => ({
+      query: t.query,
+      resultCount: t.results.length,
+      results: t.results,
+    })),
+    termCount: termResults.length,
+    totalRecords,
     dateIST: startIST.date,
     startedAtIST: startIST.timestamp,
     endedAtIST: endIST.timestamp,
@@ -302,13 +99,11 @@ async function main() {
   };
 
   fs.writeFileSync(outFile, JSON.stringify(output, null, 2), 'utf-8');
-  writeExcelSummary(results, excelFile);
+  writeBatchWorkbook(termResults, excelFile);
 
-  console.log(`Done. Saved ${results.length} records to ${outFile}`);
-  console.log(`Saved excel summary to ${excelFile}`);
+  console.log(`\nDone. Saved ${totalRecords} record(s) across ${termResults.length} term(s) to ${outFile}`);
+  console.log(`Saved excel workbook to ${excelFile}`);
   console.log(`Started: ${startIST.timestamp}  Ended: ${endIST.timestamp}  Duration: ${durationMinutes} min\n`);
-
-  await browser.close();
 }
 
 main().catch((err) => {
