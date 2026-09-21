@@ -1,8 +1,10 @@
 // Google Maps lead scraper — live console test (Playwright, headed/incognito)
 //
 // Single term:  node scraper.js "Appliance repair service in Sacramento, CA, USA" 10
-// Batch:        node scraper.js --batch batch.json
+// Batch:        node scraper.js --batch batch.json [--stop-flag stop.flag]
 //               batch.json: [{ "query": "...", "count": 10 }, ...]
+//               stop.flag: if this file exists, the run stops after the current
+//               listing (and current term) and saves whatever was collected so far.
 
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -12,11 +14,24 @@ const { sanitizeForFilename, getISTParts } = require('./lib/util');
 const { scrapeQuery } = require('./lib/scrape');
 const { writeBatchWorkbook } = require('./lib/excel');
 
-function parseTerms() {
-  const mode = process.argv[2];
+function parseArgs() {
+  const argv = process.argv.slice(2);
+  let stopFlagPath = null;
+
+  const stopIdx = argv.indexOf('--stop-flag');
+  if (stopIdx !== -1) {
+    stopFlagPath = argv[stopIdx + 1] || null;
+    argv.splice(stopIdx, 2);
+  }
+
+  return { argv, stopFlagPath };
+}
+
+function parseTerms(argv) {
+  const mode = argv[0];
 
   if (mode === '--batch') {
-    const batchPath = process.argv[3];
+    const batchPath = argv[1];
     if (!batchPath) {
       throw new Error('--batch requires a path to a JSON file of [{ query, count }, ...]');
     }
@@ -31,8 +46,8 @@ function parseTerms() {
     })).filter((t) => t.query);
   }
 
-  const query = process.argv[2] || 'Appliance repair service in Sacramento, CA, USA';
-  const count = parseInt(process.argv[3] || '10', 10);
+  const query = argv[0] || 'Appliance repair service in Sacramento, CA, USA';
+  const count = parseInt(argv[1] || '10', 10);
   return [{ query, count }];
 }
 
@@ -44,7 +59,10 @@ function batchBaseName(terms, startIST) {
 }
 
 async function main() {
-  const terms = parseTerms();
+  const { argv, stopFlagPath } = parseArgs();
+  const terms = parseTerms(argv);
+
+  const stopRequested = () => !!(stopFlagPath && fs.existsSync(stopFlagPath));
 
   const startTime = Date.now();
   const startIST = getISTParts(new Date(startTime));
@@ -56,15 +74,22 @@ async function main() {
   const page = await context.newPage();
 
   const termResults = [];
+  let stoppedByUser = false;
 
   for (let i = 0; i < terms.length; i++) {
     const { query, count } = terms[i];
     console.log(`\n[Term ${i + 1}/${terms.length}] Searching Google Maps for: "${query}"  (target ${count} results)\n`);
 
-    const results = await scrapeQuery(page, context, query, count);
+    const results = await scrapeQuery(page, context, query, count, stopRequested);
     termResults.push({ query, results });
 
     console.log(`[Term ${i + 1}/${terms.length}] Done. ${results.length} record(s).`);
+
+    if (stopRequested()) {
+      stoppedByUser = true;
+      console.log('\nStop requested by user. Saving collected data now...\n');
+      break;
+    }
   }
 
   await browser.close();
@@ -92,6 +117,7 @@ async function main() {
     })),
     termCount: termResults.length,
     totalRecords,
+    stoppedByUser,
     dateIST: startIST.date,
     startedAtIST: startIST.timestamp,
     endedAtIST: endIST.timestamp,
@@ -101,7 +127,8 @@ async function main() {
   fs.writeFileSync(outFile, JSON.stringify(output, null, 2), 'utf-8');
   writeBatchWorkbook(termResults, excelFile);
 
-  console.log(`\nDone. Saved ${totalRecords} record(s) across ${termResults.length} term(s) to ${outFile}`);
+  const donePrefix = stoppedByUser ? 'Stopped early by user.' : 'Done.';
+  console.log(`\n${donePrefix} Saved ${totalRecords} record(s) across ${termResults.length} term(s) to ${outFile}`);
   console.log(`Saved excel workbook to ${excelFile}`);
   console.log(`Started: ${startIST.timestamp}  Ended: ${endIST.timestamp}  Duration: ${durationMinutes} min\n`);
 }

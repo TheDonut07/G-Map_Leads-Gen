@@ -20,6 +20,17 @@ from tkinter import ttk, scrolledtext, messagebox
 from PIL import Image, ImageTk
 
 MAX_TERMS = 50
+DEFAULT_QUERY_PLACEHOLDER = "e.g. Appliance repair service in Sacramento, CA, USA"
+GENERIC_QUERY_PLACEHOLDER = "Enter a search term..."
+
+BASE_FONT = ("Segoe UI", 12)
+BOLD_FONT = ("Segoe UI", 12, "bold")
+HEADER_FONT = ("Segoe UI", 13, "bold")
+STATUS_FONT = ("Segoe UI", 11)
+LOG_FONT = ("Consolas", 10)
+
+PLACEHOLDER_COLOR = "#8a8a8a"
+NORMAL_COLOR = "#000000"
 
 
 def app_dir():
@@ -37,12 +48,42 @@ def resource_path(*parts):
     return os.path.join(base, *parts)
 
 
+def add_placeholder(entry, placeholder_text):
+    """Show grey placeholder text that clears itself the moment the user types."""
+    entry._placeholder = placeholder_text
+    entry._has_placeholder = True
+    entry.insert(0, placeholder_text)
+    entry.configure(foreground=PLACEHOLDER_COLOR)
+
+    def on_focus_in(_event):
+        if entry._has_placeholder:
+            entry.delete(0, "end")
+            entry.configure(foreground=NORMAL_COLOR)
+            entry._has_placeholder = False
+
+    def on_focus_out(_event):
+        if not entry.get():
+            entry.insert(0, entry._placeholder)
+            entry.configure(foreground=PLACEHOLDER_COLOR)
+            entry._has_placeholder = True
+
+    entry.bind("<FocusIn>", on_focus_in)
+    entry.bind("<FocusOut>", on_focus_out)
+
+
+def entry_value(entry):
+    """Real text in an entry, treating an untouched placeholder as empty."""
+    if getattr(entry, "_has_placeholder", False):
+        return ""
+    return entry.get().strip()
+
+
 class ScraperGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("G-Map Leads Gen")
-        self.geometry("760x640")
-        self.minsize(620, 480)
+        self.geometry("920x720")
+        self.minsize(760, 560)
 
         self.output_queue = queue.Queue()
         self.process = None
@@ -52,12 +93,49 @@ class ScraperGUI(tk.Tk):
         self.timer_running = False
         self.term_rows = []
         self.batch_file_path = None
+        self.stop_flag_path = None
+        self.stopped_by_user = False
 
+        self._int_validate_cmd = self.register(self._validate_int)
+
+        self._setup_styles()
         self._set_window_icon()
         self._build_background()
         self._build_widgets()
-        self.add_term_row("Appliance repair service in Sacramento, CA, USA", "10")
+        self.add_term_row(placeholder=DEFAULT_QUERY_PLACEHOLDER)
         self.after(100, self._poll_queue)
+
+    def _setup_styles(self):
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        style.configure(".", font=BASE_FONT)
+        style.configure("TLabel", font=BASE_FONT)
+        style.configure("TEntry", font=BASE_FONT, padding=4)
+        style.configure("TButton", font=BOLD_FONT, padding=6)
+
+        style.configure("Run.TButton", background="#2e7d32", foreground="white")
+        style.map("Run.TButton",
+                  background=[("active", "#1b5e20"), ("disabled", "#a5d6a7")],
+                  foreground=[("disabled", "#e0e0e0")])
+
+        style.configure("Add.TButton", background="#1565c0", foreground="white")
+        style.map("Add.TButton",
+                  background=[("active", "#0d47a1"), ("disabled", "#90caf9")])
+
+        style.configure("Remove.TButton", background="#c62828", foreground="white", padding=3)
+        style.map("Remove.TButton", background=[("active", "#8e0000")])
+
+        style.configure("Stop.TButton", background="#ef6c00", foreground="white")
+        style.map("Stop.TButton",
+                  background=[("active", "#b34700"), ("disabled", "#ffcc99")])
+
+        style.configure("Secondary.TButton", background="#546e7a", foreground="white")
+        style.map("Secondary.TButton",
+                  background=[("active", "#37474f"), ("disabled", "#b0bec5")])
 
     def _set_window_icon(self):
         icon_path = resource_path("assets", "logo.png")
@@ -86,7 +164,7 @@ class ScraperGUI(tk.Tk):
         self._card_last_size = None
         self._card_margin = 28
         self.bind("<Configure>", self._on_root_configure)
-        self._resize_background(760, 640)
+        self._resize_background(920, 720)
 
     def _on_root_configure(self, event):
         if event.widget is not self:
@@ -117,16 +195,17 @@ class ScraperGUI(tk.Tk):
 
     def _build_widgets(self):
         self.card = ttk.Frame(self, padding=14, relief="raised", borderwidth=1)
-        self._resize_card(760, 640)
+        self._resize_card(920, 720)
 
         header = ttk.Frame(self.card)
         header.pack(fill="x")
-        ttk.Label(header, text="Search term", font=("", 9, "bold")).grid(row=0, column=0, sticky="w", padx=(28, 5))
-        ttk.Label(header, text="Results", font=("", 9, "bold")).grid(row=0, column=1, sticky="w")
-        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="Search term", font=HEADER_FONT).grid(row=0, column=0, sticky="w", padx=(2, 5))
+        ttk.Label(header, text="Results", font=HEADER_FONT).grid(row=0, column=1, sticky="w")
 
         rows_outer = ttk.Frame(self.card)
-        rows_outer.pack(fill="both", expand=True, pady=(4, 6))
+        rows_outer.pack(fill="both", expand=False, pady=(6, 8))
+        rows_outer.configure(height=220)
+        rows_outer.pack_propagate(False)
 
         self.rows_canvas = tk.Canvas(rows_outer, highlightthickness=0)
         rows_scrollbar = ttk.Scrollbar(rows_outer, orient="vertical", command=self.rows_canvas.yview)
@@ -137,69 +216,119 @@ class ScraperGUI(tk.Tk):
         self.rows_frame = ttk.Frame(self.rows_canvas)
         self._rows_window = self.rows_canvas.create_window((0, 0), window=self.rows_frame, anchor="nw")
         self.rows_frame.bind("<Configure>", lambda e: self.rows_canvas.configure(scrollregion=self.rows_canvas.bbox("all")))
-        self.rows_canvas.bind("<Configure>", lambda e: self.rows_canvas.itemconfigure(self._rows_window, width=e.width))
-        self.rows_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.rows_canvas.bind("<Configure>", self._on_rows_canvas_configure)
+
+        # Scope mouse-wheel scrolling to the rows area only, so it doesn't hijack log scrolling.
+        self._bind_rows_mousewheel(self.rows_canvas)
+        self._bind_rows_mousewheel(self.rows_frame)
 
         add_frame = ttk.Frame(self.card)
         add_frame.pack(fill="x")
-        self.add_row_button = ttk.Button(add_frame, text="+ Add search term", command=self.on_add_row)
+        self.add_row_button = ttk.Button(add_frame, text="+ Add search term", style="Add.TButton",
+                                          command=self.on_add_row)
         self.add_row_button.pack(side="left")
-        self.term_count_label = ttk.Label(add_frame, text="")
+        self.term_count_label = ttk.Label(add_frame, text="", font=STATUS_FONT)
         self.term_count_label.pack(side="left", padx=(10, 0))
 
-        btn_frame = ttk.Frame(self.card, padding=(0, 10, 0, 0))
+        btn_frame = ttk.Frame(self.card, padding=(0, 12, 0, 0))
         btn_frame.pack(fill="x")
 
-        self.run_button = ttk.Button(btn_frame, text="Run", command=self.on_run)
+        self.run_button = ttk.Button(btn_frame, text="Run", style="Run.TButton", command=self.on_run)
         self.run_button.pack(side="left")
 
+        self.stop_button = ttk.Button(
+            btn_frame, text="Stop & Save", style="Stop.TButton",
+            command=self.on_stop_save, state="disabled"
+        )
+        self.stop_button.pack(side="left", padx=(8, 0))
+
         self.open_folder_button = ttk.Button(
-            btn_frame, text="Open results folder", command=self.on_open_results, state="disabled"
+            btn_frame, text="Open results folder", style="Secondary.TButton",
+            command=self.on_open_results, state="disabled"
         )
         self.open_folder_button.pack(side="left", padx=(8, 0))
 
         self.open_excel_button = ttk.Button(
-            btn_frame, text="Open Excel result", command=self.on_open_excel, state="disabled"
+            btn_frame, text="Open Excel result", style="Secondary.TButton",
+            command=self.on_open_excel, state="disabled"
         )
         self.open_excel_button.pack(side="left", padx=(8, 0))
 
-        self.timer_label = ttk.Label(btn_frame, text="Elapsed: 00:00", padding=(10, 0))
+        self.timer_label = ttk.Label(btn_frame, text="Elapsed: 00:00", font=BOLD_FONT, padding=(10, 0))
         self.timer_label.pack(side="right")
 
-        self.status_label = ttk.Label(self.card, text="Idle", padding=(0, 6))
+        self.status_label = ttk.Label(self.card, text="Idle", font=STATUS_FONT, padding=(0, 8))
         self.status_label.pack(fill="x")
 
-        self.log = scrolledtext.ScrolledText(self.card, state="disabled", wrap="word", height=10)
+        self.log = scrolledtext.ScrolledText(self.card, state="disabled", wrap="word", height=20, font=LOG_FONT)
         self.log.pack(fill="both", expand=True, pady=(0, 0))
 
         self._update_row_controls()
 
-    def _on_mousewheel(self, event):
+    def _bind_rows_mousewheel(self, widget):
+        widget.bind("<MouseWheel>", self._on_rows_mousewheel)
+
+    def _on_rows_mousewheel(self, event):
         self.rows_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        return "break"
+
+    def _on_rows_canvas_configure(self, event):
+        self.rows_canvas.itemconfigure(self._rows_window, width=event.width)
+        self._reflow_rows(canvas_width=event.width)
+
+    def _reflow_rows(self, canvas_width=None):
+        """Lay term rows out left-to-right, wrapping into as many columns as fit —
+        so wide/maximized windows use the horizontal space instead of a single column."""
+        if not self.term_rows:
+            return
+
+        self.update_idletasks()
+        if canvas_width is None:
+            canvas_width = self.rows_canvas.winfo_width()
+        if canvas_width <= 1:
+            canvas_width = self.rows_canvas.winfo_reqwidth() or 400
+
+        unit_width = self.term_rows[0]["frame"].winfo_reqwidth() + 16
+        cols = max(1, canvas_width // unit_width)
+
+        for i, row in enumerate(self.term_rows):
+            r, c = divmod(i, cols)
+            row["frame"].grid(row=r, column=c, sticky="w", padx=(0, 16), pady=(0, 6))
+
+    def _validate_int(self, proposed):
+        return proposed == "" or proposed.isdigit()
 
     # -- term rows -----------------------------------------------------
 
-    def add_term_row(self, query_text="", count_text="10"):
+    def add_term_row(self, query_text="", count_text="10", placeholder=None):
         if len(self.term_rows) >= MAX_TERMS:
             return
 
-        row_frame = ttk.Frame(self.rows_frame, padding=(0, 2))
-        row_frame.pack(fill="x")
+        row_frame = ttk.Frame(self.rows_frame, padding=(2, 4))
 
-        query_entry = ttk.Entry(row_frame)
-        query_entry.insert(0, query_text)
-        query_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        query_entry = ttk.Entry(row_frame, width=48)
+        if query_text:
+            query_entry.insert(0, query_text)
+        query_entry.grid(row=0, column=0, sticky="w", padx=(0, 8))
 
-        count_entry = ttk.Entry(row_frame, width=8)
+        count_entry = ttk.Entry(row_frame, width=8, validate="key",
+                                 validatecommand=(self._int_validate_cmd, "%P"))
         count_entry.insert(0, count_text)
-        count_entry.pack(side="left", padx=(0, 5))
+        count_entry.grid(row=0, column=1, sticky="w", padx=(0, 8))
 
-        remove_button = ttk.Button(row_frame, text="-", width=3,
+        remove_button = ttk.Button(row_frame, text="-", width=3, style="Remove.TButton",
                                     command=lambda: self.remove_term_row(row_data))
-        remove_button.pack(side="left")
+        remove_button.grid(row=0, column=2, sticky="w")
+
+        if not query_text:
+            add_placeholder(query_entry, placeholder or GENERIC_QUERY_PLACEHOLDER)
+
+        for widget in (row_frame, query_entry, count_entry, remove_button):
+            self._bind_rows_mousewheel(widget)
 
         row_data = {"frame": row_frame, "query_entry": query_entry, "count_entry": count_entry}
         self.term_rows.append(row_data)
+        self._reflow_rows()
         self._update_row_controls()
 
     def remove_term_row(self, row_data):
@@ -207,10 +336,11 @@ class ScraperGUI(tk.Tk):
             return
         row_data["frame"].destroy()
         self.term_rows.remove(row_data)
+        self._reflow_rows()
         self._update_row_controls()
 
     def on_add_row(self):
-        self.add_term_row("", "10")
+        self.add_term_row(placeholder=GENERIC_QUERY_PLACEHOLDER)
 
     def _update_row_controls(self):
         at_cap = len(self.term_rows) >= MAX_TERMS
@@ -221,7 +351,7 @@ class ScraperGUI(tk.Tk):
         """Returns (terms, error_message). terms is a list of {"query", "count"} dicts."""
         terms = []
         for i, row in enumerate(self.term_rows, start=1):
-            query = row["query_entry"].get().strip()
+            query = entry_value(row["query_entry"])
             count_raw = row["count_entry"].get().strip()
 
             if not query and not count_raw:
@@ -245,7 +375,20 @@ class ScraperGUI(tk.Tk):
             messagebox.showerror("Invalid input", error)
             return
 
+        batch_fd, batch_path = tempfile.mkstemp(suffix=".json", prefix="gmap_batch_")
+        try:
+            with os.fdopen(batch_fd, "w", encoding="utf-8") as f:
+                json.dump(terms, f)
+        except Exception as exc:
+            messagebox.showerror("Error", f"Could not write batch file: {exc}")
+            return
+
+        self.batch_file_path = batch_path
+        self.stop_flag_path = batch_path + ".stop"
+        self.stopped_by_user = False
+
         self.run_button.config(state="disabled")
+        self.stop_button.config(state="normal")
         self.open_folder_button.config(state="disabled")
         self.open_excel_button.config(state="disabled")
         self.last_out_file = None
@@ -257,8 +400,22 @@ class ScraperGUI(tk.Tk):
         self.timer_running = True
         self._tick_timer()
 
-        thread = threading.Thread(target=self._run_scraper, args=(terms,), daemon=True)
+        thread = threading.Thread(
+            target=self._run_scraper, args=(batch_path, self.stop_flag_path), daemon=True
+        )
         thread.start()
+
+    def on_stop_save(self):
+        if not self.stop_flag_path:
+            return
+        try:
+            with open(self.stop_flag_path, "w", encoding="utf-8") as f:
+                f.write("stop")
+        except OSError as exc:
+            messagebox.showerror("Error", f"Could not signal stop: {exc}")
+            return
+        self.stop_button.config(state="disabled")
+        self.status_label.config(text="Stopping... finishing the current listing and saving collected data.")
 
     @staticmethod
     def _format_elapsed(seconds):
@@ -272,75 +429,71 @@ class ScraperGUI(tk.Tk):
         self.timer_label.config(text=f"Elapsed: {self._format_elapsed(elapsed)}")
         self.after(500, self._tick_timer)
 
-    def _run_scraper(self, terms):
+    def _run_scraper(self, batch_path, stop_flag_path):
         base = app_dir()
         scraper_path = os.path.join(base, "scraper.js")
 
-        if not os.path.exists(scraper_path):
-            self.output_queue.put(("error", f"scraper.js not found next to this program at:\n{scraper_path}"))
-            self.output_queue.put(("done", None))
-            return
-
-        batch_fd, batch_path = tempfile.mkstemp(suffix=".json", prefix="gmap_batch_")
-        self.batch_file_path = batch_path
         try:
-            with os.fdopen(batch_fd, "w", encoding="utf-8") as f:
-                json.dump(terms, f)
-        except Exception as exc:
-            self.output_queue.put(("error", f"Could not write batch file: {exc}"))
-            self.output_queue.put(("done", None))
-            return
+            if not os.path.exists(scraper_path):
+                self.output_queue.put(("error", f"scraper.js not found next to this program at:\n{scraper_path}"))
+                self.output_queue.put(("done", None))
+                return
 
-        try:
-            self.process = subprocess.Popen(
-                ["node", scraper_path, "--batch", batch_path],
-                cwd=base,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
-        except FileNotFoundError:
-            self.output_queue.put((
-                "error",
-                "Could not find Node.js on this machine. Run setup.bat first, "
-                "then try again.",
-            ))
-            self.output_queue.put(("done", None))
-            return
+            try:
+                self.process = subprocess.Popen(
+                    ["node", scraper_path, "--batch", batch_path, "--stop-flag", stop_flag_path],
+                    cwd=base,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                )
+            except FileNotFoundError:
+                self.output_queue.put((
+                    "error",
+                    "Could not find Node.js on this machine. Run setup.bat first, "
+                    "then try again.",
+                ))
+                self.output_queue.put(("done", None))
+                return
 
-        for line in self.process.stdout:
-            line = line.rstrip("\n")
-            self.output_queue.put(("line", line))
+            for line in self.process.stdout:
+                line = line.rstrip("\n")
+                self.output_queue.put(("line", line))
 
-            if line.startswith("[Term "):
+                if line.startswith("[Term "):
+                    try:
+                        tag = line.split("]", 1)[0].replace("[Term ", "")
+                        current, total = tag.split("/")
+                        self.output_queue.put(("progress", (int(current), int(total))))
+                    except (ValueError, IndexError):
+                        pass
+
+                if line.startswith("Stopped early by user."):
+                    self.output_queue.put(("stopped", True))
+
+                if "Saved" in line and "record(s) across" in line and " to " in line:
+                    try:
+                        self.last_out_file = line.rsplit(" to ", 1)[1].strip()
+                    except IndexError:
+                        pass
+                if "Saved excel workbook to" in line:
+                    try:
+                        self.last_excel_file = line.split("Saved excel workbook to", 1)[1].strip()
+                    except IndexError:
+                        pass
+
+            self.process.wait()
+            self.output_queue.put(("done", self.process.returncode))
+        finally:
+            for path in (batch_path, stop_flag_path):
                 try:
-                    tag = line.split("]", 1)[0].replace("[Term ", "")
-                    current, total = tag.split("/")
-                    self.output_queue.put(("progress", (int(current), int(total))))
-                except (ValueError, IndexError):
+                    os.remove(path)
+                except OSError:
                     pass
-
-            if "Saved" in line and "record(s) across" in line and " to " in line:
-                try:
-                    self.last_out_file = line.rsplit(" to ", 1)[1].strip()
-                except IndexError:
-                    pass
-            if "Saved excel workbook to" in line:
-                try:
-                    self.last_excel_file = line.split("Saved excel workbook to", 1)[1].strip()
-                except IndexError:
-                    pass
-
-        self.process.wait()
-
-        try:
-            os.remove(batch_path)
-        except OSError:
-            pass
-
-        self.output_queue.put(("done", self.process.returncode))
+            self.batch_file_path = None
+            self.stop_flag_path = None
 
     def _poll_queue(self):
         try:
@@ -350,7 +503,10 @@ class ScraperGUI(tk.Tk):
                     self._append_log(payload)
                 elif kind == "progress":
                     current, total = payload
-                    self.status_label.config(text=f"Running... ({current}/{total} terms)")
+                    if not self.stopped_by_user:
+                        self.status_label.config(text=f"Running... ({current}/{total} terms)")
+                elif kind == "stopped":
+                    self.stopped_by_user = True
                 elif kind == "error":
                     self._append_log(f"[error] {payload}")
                 elif kind == "done":
@@ -366,8 +522,12 @@ class ScraperGUI(tk.Tk):
         self.timer_label.config(text=f"Elapsed: {elapsed_text}")
 
         self.run_button.config(state="normal")
+        self.stop_button.config(state="disabled")
         if returncode == 0:
-            self.status_label.config(text=f"Done. Took {elapsed_text} (mm:ss).")
+            if self.stopped_by_user:
+                self.status_label.config(text=f"Stopped by user — partial results saved. Took {elapsed_text} (mm:ss).")
+            else:
+                self.status_label.config(text=f"Done. Took {elapsed_text} (mm:ss).")
             if self.last_out_file:
                 self.open_folder_button.config(state="normal")
             if self.last_excel_file:
