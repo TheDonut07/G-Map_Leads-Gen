@@ -1,11 +1,3 @@
-"""
-Tkinter front-end for scraper.js.
-
-This is only a UI layer: it builds a batch of search-term/result-count rows,
-writes them to a small JSON file, and shells out to
-`node scraper.js --batch <file>`, streaming the CLI's stdout into the window.
-All scraping logic lives in scraper.js / lib/.
-"""
 import json
 import os
 import queue
@@ -41,7 +33,6 @@ def app_dir():
 
 
 def resource_path(*parts):
-    """Locate a bundled asset, whether running from source or from the PyInstaller exe."""
     if getattr(sys, "frozen", False):
         base = getattr(sys, "_MEIPASS", app_dir())
     else:
@@ -50,7 +41,6 @@ def resource_path(*parts):
 
 
 def add_placeholder(entry, placeholder_text):
-    """Show grey placeholder text that clears itself the moment the user types."""
     entry._placeholder = placeholder_text
     entry._has_placeholder = True
     entry.insert(0, placeholder_text)
@@ -73,7 +63,6 @@ def add_placeholder(entry, placeholder_text):
 
 
 def entry_value(entry):
-    """Real text in an entry, treating an untouched placeholder as empty."""
     if getattr(entry, "_has_placeholder", False):
         return ""
     return entry.get().strip()
@@ -222,7 +211,6 @@ class ScraperGUI(tk.Tk):
         self.rows_frame.bind("<Configure>", lambda e: self.rows_canvas.configure(scrollregion=self.rows_canvas.bbox("all")))
         self.rows_canvas.bind("<Configure>", self._on_rows_canvas_configure)
 
-        # Scope mouse-wheel scrolling to the rows area only, so it doesn't hijack log scrolling.
         self._bind_rows_mousewheel(self.rows_canvas)
         self._bind_rows_mousewheel(self.rows_frame)
 
@@ -258,14 +246,12 @@ class ScraperGUI(tk.Tk):
         )
         self.open_excel_button.pack(side="left", padx=(8, 0))
 
-        # Off by default: skipping the per-listing website visit is the biggest speed win.
         self.scrape_emails_var = tk.BooleanVar(value=False)
         self.scrape_emails_check = ttk.Checkbutton(
             btn_frame, text="Scrape emails", variable=self.scrape_emails_var
         )
         self.scrape_emails_check.pack(side="left", padx=(12, 0))
 
-        # Off by default: the browser still runs headed, just placed off-screen.
         self.show_browser_var = tk.BooleanVar(value=False)
         self.show_browser_check = ttk.Checkbutton(
             btn_frame, text="Show browser", variable=self.show_browser_var
@@ -278,8 +264,6 @@ class ScraperGUI(tk.Tk):
         self.status_label = ttk.Label(self.card, text="Idle", font=STATUS_FONT, padding=(0, 8))
         self.status_label.pack(fill="x")
 
-        # Packed with side="bottom" so it stays pinned at the very bottom of the window,
-        # outside both the scrollable rows area and the log — always visible.
         task_frame = ttk.Frame(self.card, padding=(0, 8, 0, 0))
         task_frame.pack(side="bottom", fill="x")
         ttk.Label(task_frame, text="Task name:", font=BOLD_FONT).pack(side="left")
@@ -320,8 +304,6 @@ class ScraperGUI(tk.Tk):
         self._reflow_rows(canvas_width=event.width)
 
     def _reflow_rows(self, canvas_width=None):
-        """Lay term rows out left-to-right, wrapping into as many columns as fit —
-        so wide/maximized windows use the horizontal space instead of a single column."""
         if not self.term_rows:
             return
 
@@ -341,7 +323,6 @@ class ScraperGUI(tk.Tk):
     def _validate_int(self, proposed):
         return proposed == "" or proposed.isdigit()
 
-    # -- term rows -----------------------------------------------------
 
     def add_term_row(self, query_text="", count_text="10", placeholder=None):
         if len(self.term_rows) >= MAX_TERMS:
@@ -392,7 +373,6 @@ class ScraperGUI(tk.Tk):
         self._update_task_name_placeholder()
 
     def _collect_terms(self):
-        """Returns (terms, error_message). terms is a list of {"query", "count"} dicts."""
         terms = []
         for i, row in enumerate(self.term_rows, start=1):
             query = entry_value(row["query_entry"])
@@ -411,11 +391,8 @@ class ScraperGUI(tk.Tk):
             return None, "Please enter at least one search term."
         return terms, None
 
-    # -- run -------------------------------------------------------------
 
     def _build_continue_terms(self, current_terms):
-        """Merge current row targets with previously saved partial results, matched by
-        search-term text, so already-collected listings aren't re-scraped."""
         prior_by_query = {}
         if self.resume_data:
             for t in self.resume_data.get("terms", []):

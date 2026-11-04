@@ -1,29 +1,3 @@
-// Google Maps lead scraper — live console test (Playwright, headed/incognito)
-//
-// Single term:  node scraper.js "Appliance repair service in Sacramento, CA, USA" 10
-// Batch:        node scraper.js --batch batch.json [--stop-flag stop.flag]
-//
-//               batch.json is either a plain array of { query, count }, or an object:
-//               {
-//                 "taskName": "...",                 // used as the output file base name
-//                 "terms": [
-//                   { "query": "...", "count": 10, "skip": 0, "priorResults": [] },
-//                   ...
-//                 ]
-//               }
-//               skip/priorResults let a "Continue" run resume a term without re-scraping
-//               listings a previous run already collected; count 0 carries priorResults
-//               forward untouched.
-//
-//               stop.flag: if this file exists, the run stops after the current listing
-//               (and current term) and saves whatever was collected so far.
-//
-// --show-browser: show the Chromium window on screen. By default it still runs headed but is
-//               placed off-screen so it doesn't get in the way.
-//
-// --emails:     also visit each business's website to look for email addresses (off by default,
-//               since it is by far the slowest part of a run).
-
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
@@ -119,8 +93,6 @@ async function main() {
   let page = null;
 
   if (needsScraping) {
-    // Keep Chromium from throttling a window it thinks is hidden/occluded; otherwise the
-    // off-screen window would scrape slower than a visible one.
     const launchArgs = [
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
