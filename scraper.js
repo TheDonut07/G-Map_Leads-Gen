@@ -18,6 +18,9 @@
 //               stop.flag: if this file exists, the run stops after the current listing
 //               (and current term) and saves whatever was collected so far.
 //
+// --show-browser: show the Chromium window on screen. By default it still runs headed but is
+//               placed off-screen so it doesn't get in the way.
+//
 // --emails:     also visit each business's website to look for email addresses (off by default,
 //               since it is by far the slowest part of a run).
 
@@ -37,13 +40,17 @@ function parseArgs() {
   const scrapeEmails = emailsIdx !== -1;
   if (scrapeEmails) argv.splice(emailsIdx, 1);
 
+  const showIdx = argv.indexOf('--show-browser');
+  const showBrowser = showIdx !== -1;
+  if (showBrowser) argv.splice(showIdx, 1);
+
   const stopIdx = argv.indexOf('--stop-flag');
   if (stopIdx !== -1) {
     stopFlagPath = argv[stopIdx + 1] || null;
     argv.splice(stopIdx, 2);
   }
 
-  return { argv, stopFlagPath, scrapeEmails };
+  return { argv, stopFlagPath, scrapeEmails, showBrowser };
 }
 
 function loadRun(argv) {
@@ -98,7 +105,7 @@ function batchBaseName(terms, startIST) {
 }
 
 async function main() {
-  const { argv, stopFlagPath, scrapeEmails } = parseArgs();
+  const { argv, stopFlagPath, scrapeEmails, showBrowser } = parseArgs();
   const { terms, taskName } = loadRun(argv);
 
   const stopRequested = () => !!(stopFlagPath && fs.existsSync(stopFlagPath));
@@ -112,7 +119,17 @@ async function main() {
   let page = null;
 
   if (needsScraping) {
-    browser = await chromium.launch({ headless: false });
+    // Keep Chromium from throttling a window it thinks is hidden/occluded; otherwise the
+    // off-screen window would scrape slower than a visible one.
+    const launchArgs = [
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-background-timer-throttling',
+    ];
+    if (!showBrowser) {
+      launchArgs.push('--window-position=-32000,-32000');
+    }
+    browser = await chromium.launch({ headless: false, args: launchArgs });
     context = await browser.newContext({
       viewport: { width: 1400, height: 900 },
     });

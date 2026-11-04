@@ -265,6 +265,13 @@ class ScraperGUI(tk.Tk):
         )
         self.scrape_emails_check.pack(side="left", padx=(12, 0))
 
+        # Off by default: the browser still runs headed, just placed off-screen.
+        self.show_browser_var = tk.BooleanVar(value=False)
+        self.show_browser_check = ttk.Checkbutton(
+            btn_frame, text="Show browser", variable=self.show_browser_var
+        )
+        self.show_browser_check.pack(side="left", padx=(8, 0))
+
         self.timer_label = ttk.Label(btn_frame, text="Elapsed: 00:00", font=BOLD_FONT, padding=(10, 0))
         self.timer_label.pack(side="right")
 
@@ -463,6 +470,7 @@ class ScraperGUI(tk.Tk):
         self.run_button.config(state="disabled")
         self.stop_button.config(state="normal")
         self.scrape_emails_check.config(state="disabled")
+        self.show_browser_check.config(state="disabled")
         self.open_folder_button.config(state="disabled")
         self.open_excel_button.config(state="disabled")
         self.last_out_file = None
@@ -478,7 +486,8 @@ class ScraperGUI(tk.Tk):
 
         thread = threading.Thread(
             target=self._run_scraper,
-            args=(batch_path, self.stop_flag_path, self.scrape_emails_var.get()),
+            args=(batch_path, self.stop_flag_path,
+                  self.scrape_emails_var.get(), self.show_browser_var.get()),
             daemon=True,
         )
         thread.start()
@@ -530,7 +539,7 @@ class ScraperGUI(tk.Tk):
         self.timer_label.config(text=f"Elapsed: {self._format_elapsed(elapsed)}")
         self.after(500, self._tick_timer)
 
-    def _run_scraper(self, batch_path, stop_flag_path, scrape_emails=False):
+    def _run_scraper(self, batch_path, stop_flag_path, scrape_emails=False, show_browser=False):
         base = app_dir()
         scraper_path = os.path.join(base, "scraper.js")
 
@@ -543,6 +552,8 @@ class ScraperGUI(tk.Tk):
             cmd = ["node", scraper_path, "--batch", batch_path, "--stop-flag", stop_flag_path]
             if scrape_emails:
                 cmd.append("--emails")
+            if show_browser:
+                cmd.append("--show-browser")
 
             try:
                 self.process = subprocess.Popen(
@@ -630,6 +641,7 @@ class ScraperGUI(tk.Tk):
         self.run_button.config(state="normal")
         self.stop_button.config(state="disabled")
         self.scrape_emails_check.config(state="normal")
+        self.show_browser_check.config(state="normal")
         if returncode == 0:
             if self.stopped_by_user:
                 self.status_label.config(text=f"Stopped by user — partial results saved. Took {elapsed_text} (mm:ss).")
