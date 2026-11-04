@@ -17,18 +17,25 @@
 //
 //               stop.flag: if this file exists, the run stops after the current listing
 //               (and current term) and saves whatever was collected so far.
+//
+// --emails:     also visit each business's website to look for email addresses (off by default,
+//               since it is by far the slowest part of a run).
 
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
 const { sanitizeForFilename, getISTParts } = require('./lib/util');
-const { scrapeQuery } = require('./lib/scrape');
+const { scrapeQuery, blockUnneededRequests } = require('./lib/scrape');
 const { writeBatchWorkbook } = require('./lib/excel');
 
 function parseArgs() {
   const argv = process.argv.slice(2);
   let stopFlagPath = null;
+
+  const emailsIdx = argv.indexOf('--emails');
+  const scrapeEmails = emailsIdx !== -1;
+  if (scrapeEmails) argv.splice(emailsIdx, 1);
 
   const stopIdx = argv.indexOf('--stop-flag');
   if (stopIdx !== -1) {
@@ -36,7 +43,7 @@ function parseArgs() {
     argv.splice(stopIdx, 2);
   }
 
-  return { argv, stopFlagPath };
+  return { argv, stopFlagPath, scrapeEmails };
 }
 
 function loadRun(argv) {
@@ -91,7 +98,7 @@ function batchBaseName(terms, startIST) {
 }
 
 async function main() {
-  const { argv, stopFlagPath } = parseArgs();
+  const { argv, stopFlagPath, scrapeEmails } = parseArgs();
   const { terms, taskName } = loadRun(argv);
 
   const stopRequested = () => !!(stopFlagPath && fs.existsSync(stopFlagPath));
@@ -109,7 +116,9 @@ async function main() {
     context = await browser.newContext({
       viewport: { width: 1400, height: 900 },
     });
+    await blockUnneededRequests(context);
     page = await context.newPage();
+    console.log(`Email scraping: ${scrapeEmails ? 'ON' : 'OFF'}`);
   }
 
   const termResults = [];
@@ -127,7 +136,7 @@ async function main() {
     const resumeNote = skip ? `, resuming after ${skip} already collected` : '';
     console.log(`\n[Term ${i + 1}/${terms.length}] Searching Google Maps for: "${query}"  (target ${count} more result(s)${resumeNote})\n`);
 
-    const newResults = await scrapeQuery(page, context, query, count, stopRequested, skip);
+    const newResults = await scrapeQuery(page, context, query, count, stopRequested, skip, scrapeEmails);
     const results = [...priorResults, ...newResults];
     termResults.push({ query, results });
 
