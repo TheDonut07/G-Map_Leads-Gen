@@ -70,12 +70,14 @@ Only need 5 of the 11 results you asked for? Click **Stop & Save** during a run.
 
 Stopping takes effect between listings, so if it's still loading a search's result feed it may take a few seconds to respond.
 
+Progress is written to the JSON file after every listing, so a crash keeps everything collected up to that point. The Excel file is written when the run ends.
+
 ### Continue
 
 After a Stop & Save, the **Run** button becomes **Continue**. Clicking it resumes the same task:
 
 - Terms that were already fully collected are not re-scraped.
-- A partially collected term only fetches the *remaining* listings (e.g. 5 of 11 done → it scrapes the next 6, skipping the 5 already saved).
+- A partially collected term only fetches the *remaining* listings (e.g. 5 of 11 done → it scrapes 6 more, ignoring the 5 already saved).
 - Terms that never started run normally.
 - Results are merged back into the **same** task-name files, and the log keeps its history.
 - The Task name field is locked while in Continue mode so the output file can't change mid-task.
@@ -84,8 +86,16 @@ You can Stop & Save and Continue repeatedly. Once a run completes all the way th
 
 Things to know:
 
-- Continue matches previous progress to your rows by the search-term **text**. If you change a term's text, it is treated as a new term. If you remove a row before continuing, that term's previously saved results are dropped from the merged output.
-- To resume a partial term, Continue skips the first *N* results Google Maps shows for that search. This assumes Maps returns results in the same order as the earlier run, which is usually but not always true.
+- Continue matches previous progress to your rows by the search-term **text** (ignoring case and extra spaces). If you change a term's text, it is treated as a new term. If you remove a row before continuing, that term's saved results stay in the file.
+
+### Running the same task again
+
+After a crash, or any time you reuse a **Task name**, the scraper reads the existing file for that name and carries on from it:
+
+- The results number is the **total** you want for that term. With 6 saved and 10 requested, it collects 4 new businesses. With 10 or more saved, it skips the term.
+- Businesses already in the file are ignored, matched by their Google Maps place ID, so a rerun can't add duplicates. The check is per search term, so one business can still appear under two different terms.
+- Terms in the file that aren't in the current run are kept.
+- To start from scratch, use a new Task name.
 
 ## CLI usage
 
@@ -114,7 +124,7 @@ Output is printed live to the console. The run is saved to `results/<sanitized-s
 → results/excel/Appliance_repair_service_in_Sacramento-CA-USA.xlsx
 ```
 
-Running the same search again overwrites both files.
+Running the same search again continues from the existing file: the number is the total you want, and businesses already saved are ignored.
 
 ### Batch (multiple search terms)
 
@@ -147,7 +157,7 @@ Terms run in order in one browser session and produce one JSON file and one Exce
 
 **Stopping early.** If you pass `--stop-flag <path>`, the scraper checks for that file between listings. Create the file (e.g. `echo. > stop.flag`) and the run stops after the current listing and saves what it has, printing `Stopped early by user.` in the summary line. This is how the GUI's Stop & Save works.
 
-**Resuming.** Each term entry may also carry `skip` (how many listings a previous run already collected) and `priorResults` (those collected records). `count` is then the number of *additional* listings to fetch; `count: 0` carries `priorResults` through untouched without scraping. The GUI's Continue builds exactly this.
+**Resuming.** If the output file already exists, its records for a matching term are loaded first and those businesses are ignored while scraping; `count` is the total wanted for that term. A term entry may also carry `priorResults` (records already collected), in which case `count` is the number of *additional* listings to fetch. The GUI's Continue uses this.
 
 ## Output
 
@@ -235,7 +245,7 @@ Swap either file for your own image (same filenames) and rebuild.
 - Email extraction is best-effort — not every business exposes an email on their site, so `emails` may be an empty array.
 - Google Maps' page structure isn't versioned, so scraper selectors may break if Google changes their layout.
 - Pulling large volumes of results or running many searches back-to-back increases the chance of hitting a captcha. Scroll/navigation delays are randomized to reduce this risk.
-- Reusing a task name (or running the same single search again) overwrites the previous output files with that name.
+- Reusing a task name (or running the same single search again) adds to the existing output files instead of replacing them. Use a new task name for a fresh result set.
 - For personal use only — review Google's Terms of Service before scraping at scale.
 
 ![G-Map Leads Gen background](assets/background.png)

@@ -407,7 +407,6 @@ class ScraperGUI(tk.Tk):
             batch_terms.append({
                 "query": t["query"],
                 "count": remaining,
-                "skip": done,
                 "priorResults": prior_results,
             })
         return batch_terms
@@ -426,7 +425,7 @@ class ScraperGUI(tk.Tk):
             self.last_run_task_name = task_name
             self.resume_data = None
             batch_terms = [
-                {"query": t["query"], "count": t["count"], "skip": 0, "priorResults": []}
+                {"query": t["query"], "count": t["count"], "priorResults": []}
                 for t in terms
             ]
 
@@ -519,11 +518,11 @@ class ScraperGUI(tk.Tk):
     def _run_scraper(self, batch_path, stop_flag_path, scrape_emails=False, show_browser=False):
         base = app_dir()
         scraper_path = os.path.join(base, "scraper.js")
+        returncode = -1
 
         try:
             if not os.path.exists(scraper_path):
                 self.output_queue.put(("error", f"scraper.js not found next to this program at:\n{scraper_path}"))
-                self.output_queue.put(("done", None))
                 return
 
             cmd = ["node", scraper_path, "--batch", batch_path, "--stop-flag", stop_flag_path]
@@ -539,6 +538,8 @@ class ScraperGUI(tk.Tk):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     bufsize=1,
                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                 )
@@ -548,37 +549,22 @@ class ScraperGUI(tk.Tk):
                     "Could not find Node.js on this machine. Run setup.bat first, "
                     "then try again.",
                 ))
-                self.output_queue.put(("done", None))
                 return
 
-            for line in self.process.stdout:
-                line = line.rstrip("\n")
-                self.output_queue.put(("line", line))
-
-                if line.startswith("[Term "):
-                    try:
-                        tag = line.split("]", 1)[0].replace("[Term ", "")
-                        current, total = tag.split("/")
-                        self.output_queue.put(("progress", (int(current), int(total))))
-                    except (ValueError, IndexError):
-                        pass
-
-                if line.startswith("Stopped early by user."):
-                    self.output_queue.put(("stopped", True))
-
-                if "Saved" in line and "record(s) across" in line and " to " in line:
-                    try:
-                        self.last_out_file = line.rsplit(" to ", 1)[1].strip()
-                    except IndexError:
-                        pass
-                if "Saved excel workbook to" in line:
-                    try:
-                        self.last_excel_file = line.split("Saved excel workbook to", 1)[1].strip()
-                    except IndexError:
-                        pass
+            try:
+                for line in self.process.stdout:
+                    self._handle_output_line(line.rstrip("\n"))
+            except Exception as exc:
+                self.output_queue.put((
+                    "error",
+                    f"Lost the scraper's live log ({exc}). It is still running and Stop & Save still works.",
+                ))
+                self._drain_output()
 
             self.process.wait()
-            self.output_queue.put(("done", self.process.returncode))
+            returncode = self.process.returncode
+        except Exception as exc:
+            self.output_queue.put(("error", f"Scraper run failed: {exc}"))
         finally:
             for path in (batch_path, stop_flag_path):
                 try:
@@ -587,6 +573,40 @@ class ScraperGUI(tk.Tk):
                     pass
             self.batch_file_path = None
             self.stop_flag_path = None
+            self.output_queue.put(("done", returncode))
+
+    def _handle_output_line(self, line):
+        self.output_queue.put(("line", line))
+
+        if line.startswith("[Term "):
+            try:
+                tag = line.split("]", 1)[0].replace("[Term ", "")
+                current, total = tag.split("/")
+                self.output_queue.put(("progress", (int(current), int(total))))
+            except (ValueError, IndexError):
+                pass
+
+        if line.startswith("Stopped early by user."):
+            self.output_queue.put(("stopped", True))
+
+        if "Saved" in line and "record(s) across" in line and " to " in line:
+            try:
+                self.last_out_file = line.rsplit(" to ", 1)[1].strip()
+            except IndexError:
+                pass
+        if "Saved excel workbook to" in line:
+            try:
+                self.last_excel_file = line.split("Saved excel workbook to", 1)[1].strip()
+            except IndexError:
+                pass
+
+    def _drain_output(self):
+        # The scraper blocks once its output pipe is full, so keep emptying it.
+        try:
+            while self.process.stdout.buffer.read(65536):
+                pass
+        except (OSError, ValueError):
+            pass
 
     def _poll_queue(self):
         try:
@@ -626,12 +646,14 @@ class ScraperGUI(tk.Tk):
             else:
                 self.status_label.config(text=f"Done. Took {elapsed_text} (mm:ss).")
                 self._exit_continue_mode()
-            if self.last_out_file:
-                self.open_folder_button.config(state="normal")
-            if self.last_excel_file:
-                self.open_excel_button.config(state="normal")
         else:
-            self.status_label.config(text=f"Failed (exit code {returncode}) after {elapsed_text}.")
+            partial_note = " Partial results saved; Run again with the same task name to resume." if self.last_out_file else ""
+            self.status_label.config(text=f"Failed (exit code {returncode}) after {elapsed_text}.{partial_note}")
+
+        if self.last_out_file:
+            self.open_folder_button.config(state="normal")
+        if self.last_excel_file:
+            self.open_excel_button.config(state="normal")
 
     def on_open_results(self):
         results_dir = os.path.join(app_dir(), "results")
