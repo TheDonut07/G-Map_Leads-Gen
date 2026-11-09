@@ -97,6 +97,16 @@ After a crash, or any time you reuse a **Task name**, the scraper reads the exis
 - Terms in the file that aren't in the current run are kept.
 - To start from scratch, use a new Task name.
 
+### Webhook Notification
+
+Paste a webhook URL into the **Webhook Notification** box to get a message as each search term finishes, plus one when the whole run finishes, is stopped, or fails. Separate several URLs with commas, or leave the box empty for no notifications.
+
+```
+Task_name: 1/3 search terms complete. "Pizza in Austin, TX" - 10 results
+```
+
+Discord and Slack webhooks are detected from the URL. Any other URL (Zapier, Make, n8n, your own server) receives JSON with a `text` message plus fields such as `event`, `term`, `totalTerms`, `query` and `results`. A failed notification is noted in the log and never interrupts the scrape. Treat webhook URLs like passwords.
+
 ## CLI usage
 
 The scraper can be used directly without the GUI.
@@ -155,6 +165,8 @@ or an object that also names the task (the name becomes the output filename):
 
 Terms run in order in one browser session and produce one JSON file and one Excel workbook (a sheet per term). With no `taskName`, a single-term batch is named after its keyword and a multi-term batch is named `batch_<timestamp>_<N>terms`.
 
+**Webhooks.** Add `"webhooks": ["<url>"]` next to `taskName` to get progress notifications.
+
 **Stopping early.** If you pass `--stop-flag <path>`, the scraper checks for that file between listings. Create the file (e.g. `echo. > stop.flag`) and the run stops after the current listing and saves what it has, printing `Stopped early by user.` in the summary line. This is how the GUI's Stop & Save works.
 
 **Resuming.** If the output file already exists, its records for a matching term are loaded first and those businesses are ignored while scraping; `count` is the total wanted for that term. A term entry may also carry `priorResults` (records already collected), in which case `count` is the number of *additional* listings to fetch. The GUI's Continue uses this.
@@ -208,6 +220,7 @@ Run metadata (top-level fields of the JSON file):
 scraper.js      Entry point: CLI parsing, term queue, stop handling, writes output
 lib/scrape.js   Playwright scraping (Maps listings, website email lookup)
 lib/excel.js    Builds the multi-sheet Excel workbook
+lib/notify.js   Sends webhook notifications
 lib/util.js     Filename sanitizing and IST timestamp helpers
 gui.py          Tkinter front-end (drives scraper.js)
 assets/         logo.png (icon) and background.png (GUI background)

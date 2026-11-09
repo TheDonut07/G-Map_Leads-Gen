@@ -5,6 +5,7 @@ const path = require('path');
 const { sanitizeForFilename, getISTParts, listingKey, withTimeout } = require('./lib/util');
 const { scrapeQuery, blockUnneededRequests } = require('./lib/scrape');
 const { writeBatchWorkbook } = require('./lib/excel');
+const { createNotifier } = require('./lib/notify');
 
 const BROWSER_CLOSE_TIMEOUT = 15000;
 
@@ -41,11 +42,13 @@ function loadRun(argv) {
     const parsed = JSON.parse(raw);
 
     let taskName = null;
+    let webhooks = [];
     let rawTerms;
     if (Array.isArray(parsed)) {
       rawTerms = parsed;
     } else {
       taskName = parsed.taskName ? String(parsed.taskName).trim() : null;
+      webhooks = Array.isArray(parsed.webhooks) ? parsed.webhooks.filter(Boolean).map(String) : [];
       rawTerms = parsed.terms;
     }
 
@@ -64,12 +67,16 @@ function loadRun(argv) {
       })
       .filter((t) => t.query);
 
-    return { terms, taskName };
+    return { terms, taskName, webhooks };
   }
 
   const query = argv[0] || 'Appliance repair service in Sacramento, CA, USA';
   const count = parseInt(argv[1] || '10', 10);
-  return { terms: [{ query, count, priorResults: [] }], taskName: null };
+  return { terms: [{ query, count, priorResults: [] }], taskName: null, webhooks: [] };
+}
+
+function plural(count, word) {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
 }
 
 function batchBaseName(terms, startIST) {
@@ -106,8 +113,6 @@ function addRecords(entry, records) {
   }
 }
 
-// One entry per search term, seeded from the output file already on disk.
-// `started` keeps terms this run hasn't reached out of the output.
 function buildEntries(terms, savedTerms) {
   const entries = new Map();
   const entryFor = (query) => {
@@ -147,7 +152,8 @@ function writeJsonSafely(file, data) {
 
 async function main() {
   const { argv, stopFlagPath, scrapeEmails, showBrowser } = parseArgs();
-  const { terms, taskName } = loadRun(argv);
+  const { terms, taskName, webhooks } = loadRun(argv);
+  const notify = createNotifier(webhooks);
 
   const stopRequested = () => !!(stopFlagPath && fs.existsSync(stopFlagPath));
 
@@ -213,6 +219,9 @@ async function main() {
     console.log(`Email scraping: ${scrapeEmails ? 'ON' : 'OFF'}`);
   }
 
+  if (webhooks.length) console.log(`Webhook notifications: ON (${plural(webhooks.length, 'URL')})`);
+
+  const displayName = taskName || baseName;
   let runError = null;
 
   try {
@@ -251,6 +260,13 @@ async function main() {
         console.log('\nStop requested by user. Saving collected data now...\n');
         break;
       }
+
+      const found = entry.results.length;
+      const shortfall = found < target ? ` (wanted ${target})` : '';
+      await notify(
+        `${displayName}: ${i + 1}/${plannedTerms.length} search terms complete. "${query}" - ${plural(found, 'result')}${shortfall}`,
+        { event: 'term_complete', taskName: displayName, term: i + 1, totalTerms: plannedTerms.length, query, results: found, target }
+      );
     }
   } catch (err) {
     runError = err;
@@ -283,6 +299,23 @@ async function main() {
   console.log(`\n${donePrefix} Saved ${totalRecords} record(s) across ${savedEntries().length} term(s) to ${outFile}`);
   if (excelSaved) console.log(`Saved excel workbook to ${excelFile}`);
   console.log(`Started: ${startIST.timestamp}  Ended: ${endIST.timestamp}  Duration: ${durationMinutes} min\n`);
+
+  const savedText = `${plural(totalRecords, 'result')} saved`;
+  const summaryDetails = { taskName: displayName, totalTerms: plannedTerms.length, totalResults: totalRecords, durationMinutes };
+  if (runError) {
+    const reason = runError.message.split('\n')[0];
+    await notify(
+      `${displayName}: run failed (${reason}). ${savedText}. Run again with the same task name to resume.`,
+      { event: 'run_failed', reason, ...summaryDetails }
+    );
+  } else if (stoppedByUser) {
+    await notify(`${displayName}: stopped by user. ${savedText}.`, { event: 'run_stopped', ...summaryDetails });
+  } else {
+    await notify(
+      `${displayName}: finished all ${plural(plannedTerms.length, 'search term')}. ${savedText} in ${durationMinutes} min.`,
+      { event: 'run_finished', ...summaryDetails }
+    );
+  }
 
   return runError ? 1 : 0;
 }

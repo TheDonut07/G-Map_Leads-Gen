@@ -15,6 +15,7 @@ from PIL import Image, ImageTk
 MAX_TERMS = 50
 DEFAULT_QUERY_PLACEHOLDER = "e.g. Appliance repair service in Sacramento, CA, USA"
 GENERIC_QUERY_PLACEHOLDER = "Enter a search term..."
+WEBHOOK_PLACEHOLDER = "Optional: paste a webhook URL (separate several with commas)"
 
 BASE_FONT = ("Segoe UI", 12)
 BOLD_FONT = ("Segoe UI", 12, "bold")
@@ -271,7 +272,14 @@ class ScraperGUI(tk.Tk):
         self.task_name_entry.pack(side="left", fill="x", expand=True, padx=(8, 0))
         add_placeholder(self.task_name_entry, self._default_task_name())
 
-        self.log = scrolledtext.ScrolledText(self.card, state="disabled", wrap="word", height=20, font=LOG_FONT)
+        webhook_frame = ttk.Frame(self.card, padding=(0, 8, 0, 0))
+        webhook_frame.pack(side="bottom", fill="x")
+        ttk.Label(webhook_frame, text="Webhook Notification:", font=BOLD_FONT).pack(side="left")
+        self.webhook_entry = ttk.Entry(webhook_frame)
+        self.webhook_entry.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        add_placeholder(self.webhook_entry, WEBHOOK_PLACEHOLDER)
+
+        self.log =scrolledtext.ScrolledText(self.card, state="disabled", wrap="word", height=20, font=LOG_FONT)
         self.log.pack(fill="both", expand=True, pady=(0, 0))
 
         self._update_row_controls()
@@ -391,6 +399,12 @@ class ScraperGUI(tk.Tk):
             return None, "Please enter at least one search term."
         return terms, None
 
+    def _collect_webhooks(self):
+        urls = entry_value(self.webhook_entry).replace(",", " ").split()
+        for url in urls:
+            if not url.lower().startswith(("https://", "http://")):
+                return None, f"Webhook Notification: \"{url}\" is not a valid URL. It must start with https://"
+        return urls, None
 
     def _build_continue_terms(self, current_terms):
         prior_by_query = {}
@@ -417,6 +431,11 @@ class ScraperGUI(tk.Tk):
             messagebox.showerror("Invalid input", error)
             return
 
+        webhooks, error = self._collect_webhooks()
+        if error:
+            messagebox.showerror("Invalid input", error)
+            return
+
         if self.is_continue_mode:
             task_name = self.last_run_task_name
             batch_terms = self._build_continue_terms(terms)
@@ -429,7 +448,7 @@ class ScraperGUI(tk.Tk):
                 for t in terms
             ]
 
-        batch_payload = {"taskName": task_name, "terms": batch_terms}
+        batch_payload = {"taskName": task_name, "webhooks": webhooks, "terms": batch_terms}
 
         batch_fd, batch_path = tempfile.mkstemp(suffix=".json", prefix="gmap_batch_")
         try:
@@ -447,6 +466,7 @@ class ScraperGUI(tk.Tk):
         self.stop_button.config(state="normal")
         self.scrape_emails_check.config(state="disabled")
         self.show_browser_check.config(state="disabled")
+        self.webhook_entry.config(state="disabled")
         self.open_folder_button.config(state="disabled")
         self.open_excel_button.config(state="disabled")
         self.last_out_file = None
@@ -601,7 +621,6 @@ class ScraperGUI(tk.Tk):
                 pass
 
     def _drain_output(self):
-        # The scraper blocks once its output pipe is full, so keep emptying it.
         try:
             while self.process.stdout.buffer.read(65536):
                 pass
@@ -639,6 +658,7 @@ class ScraperGUI(tk.Tk):
         self.stop_button.config(state="disabled")
         self.scrape_emails_check.config(state="normal")
         self.show_browser_check.config(state="normal")
+        self.webhook_entry.config(state="normal")
         if returncode == 0:
             if self.stopped_by_user:
                 self.status_label.config(text=f"Stopped by user — partial results saved. Took {elapsed_text} (mm:ss).")

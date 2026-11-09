@@ -1,5 +1,4 @@
 @echo off
-REM Rebuilds GMapLeadsGen.exe from gui.py. Run this after changing gui.py.
 
 cd /d "%~dp0"
 
